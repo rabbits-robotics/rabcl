@@ -10,11 +10,20 @@ namespace rabcl
 class Can
 {
 public:
-  // DM2325 decode parameters (must match DM AC-Tools settings)
-  static constexpr float DM_PMAX = 78.5f;   // [rad] motor shaft
-  static constexpr float DM_VMAX = 200.0f;  // [rad/s] motor shaft
-  static constexpr float DM_TMAX = 3.0f;    // [Nm] output shaft
-  static constexpr float DM_GR = 25.0f;     // gear ratio
+  // DM decode/encode parameters (must match DM AC-Tools settings)
+  // DM2325 (chassis wheels)
+  static constexpr float DM2325_PMAX = 78.5f;   // [rad] motor shaft
+  static constexpr float DM2325_VMAX = 200.0f;  // [rad/s] motor shaft
+  static constexpr float DM2325_TMAX = 3.0f;    // [Nm] output shaft
+  static constexpr float DM2325_GR = 25.0f;     // gear ratio
+  // DM3507 / DM-J3507-2EC (pitch axis); position/vel/torque are output-shaft → GR=1 in decode
+  static constexpr float DM3507_PMAX = 12.566f;  // [rad] (= 4*pi)
+  static constexpr float DM3507_VMAX = 50.0f;    // [rad/s]
+  static constexpr float DM3507_TMAX = 5.0f;     // [Nm]
+  static constexpr float DM3507_GR = 7.0f;       // gear ratio (informational)
+  // MIT-mode gain ranges (DAMIAO standard)
+  static constexpr float DM_KP_MAX = 500.0f;
+  static constexpr float DM_KD_MAX = 5.0f;
 
 public:
   Can();
@@ -53,10 +62,17 @@ public:
   static void PrepareDMMotorVelocityCmd(
     float velocity /* [rad/s, output shaft] */,
     uint8_t can_data[8]);
+  static void PrepareDMMotorMITCmd(
+    float pos /* [rad] */, float vel /* [rad/s] */,
+    float kp, float kd, float tff /* [Nm] */,
+    float pmax, float vmax, float tmax,
+    uint8_t can_data[8]);
 
 private:
   static void ParseLKMotorFeedback(const uint8_t can_data[8], MotorInfo & motor);
-  static void ParseDMMotorFeedback(const uint8_t can_data[8], MotorInfo & motor);
+  static void ParseDMMotorFeedback(
+    const uint8_t can_data[8], MotorInfo & motor,
+    float pmax, float vmax, float tmax, float gr);
 };
 }  // namespace rabcl
 

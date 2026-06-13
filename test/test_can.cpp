@@ -61,12 +61,36 @@ TEST_F(CanTest, UpdateDataPitchModes)
 
 TEST_F(CanTest, UpdateDataPitchRx)
 {
-  // LK motor feedback format: [cmd, temp, curr_L, curr_H, spd_L, spd_H, pos_L, pos_H]
-  uint8_t data[8] = {0xA4, 0x25, 0x64, 0x00, 0x01, 0x00, 0x00, 0x10};
+  // DM3507 feedback (output-shaft, GR=1), max values → pos=PMAX, vel=VMAX, torque=TMAX
+  // D[0]=id/err, D[1:2]=pos, D[3:4]=vel, D[4:5]=torque, D[6]=T_MOS, D[7]=T_Rotor
+  uint8_t data[8] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x25, 0x00};
   Info info;
   EXPECT_TRUE(Can::UpdateData(static_cast<uint32_t>(CAN_ID::PITCH_RX), data, info));
-  EXPECT_FLOAT_EQ(info.pitch_act_.temperature_, 37.0f);  // 0x25 = 37
-  EXPECT_NEAR(info.pitch_act_.current_, 1.0f, 0.01f);  // 0x0064 = 100 → 100 * 0.01 = 1.0 A
+  EXPECT_NEAR(info.pitch_act_.position_, Can::DM3507_PMAX, 0.01f);  // pos_raw=0xFFFF → +PMAX
+  EXPECT_NEAR(info.pitch_act_.velocity_, Can::DM3507_VMAX, 0.05f);  // vel_raw=0xFFF  → +VMAX
+  EXPECT_NEAR(info.pitch_act_.torque_, Can::DM3507_TMAX, 0.01f);    // tor_raw=0xFFF  → +TMAX
+  EXPECT_FLOAT_EQ(info.pitch_act_.temperature_mos_, 37.0f);         // 0x25 = 37
+}
+
+TEST_F(CanTest, PrepareDMMotorMITCmd)
+{
+  // pos=0, vel=0, kp=0, kd=0, tff=0 → pos/vel/tff land on midpoints, kp/kd = 0
+  uint8_t out[8] = {};
+  Can::PrepareDMMotorMITCmd(
+    0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+    Can::DM3507_PMAX, Can::DM3507_VMAX, Can::DM3507_TMAX, out);
+
+  uint16_t p = (static_cast<uint16_t>(out[0]) << 8) | out[1];
+  uint16_t v = (static_cast<uint16_t>(out[2]) << 4) | (out[3] >> 4);
+  uint16_t kp = (static_cast<uint16_t>(out[3] & 0x0F) << 8) | out[4];
+  uint16_t kd = (static_cast<uint16_t>(out[5]) << 4) | (out[6] >> 4);
+  uint16_t t = (static_cast<uint16_t>(out[6] & 0x0F) << 8) | out[7];
+
+  EXPECT_NEAR(p, 32767, 1);  // 0 over [-PMAX,PMAX], 16-bit → midpoint
+  EXPECT_NEAR(v, 2047, 1);   // 0 over [-VMAX,VMAX], 12-bit → midpoint
+  EXPECT_EQ(kp, 0);
+  EXPECT_EQ(kd, 0);
+  EXPECT_NEAR(t, 2047, 1);   // 0 over [-TMAX,TMAX], 12-bit → midpoint
 }
 
 TEST_F(CanTest, UpdateDataUnknownIdx)

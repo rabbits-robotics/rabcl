@@ -25,8 +25,8 @@ enum CAN_ID
   CAN_CHASSIS_BACK_CMD,
   CAN_CHASSIS_FRONT_ACT,
   CAN_CHASSIS_BACK_ACT,
-  PITCH_TX = 0x142,
-  PITCH_RX = 0x142,
+  PITCH_TX = 0x42,    // DM3507 MIT command ID (= Slave/CAN_ID; tool 0x142 stored 8-bit → 0x42)
+  PITCH_RX = 0x52,    // DM3507 feedback ID (= Master/MST_ID; tool 0x152 stored 8-bit → 0x52)
   YAW_TX = 0x141,
   YAW_RX = 0x141,
   CHASSIS_FRONT_RIGHT_TX = 0x43,

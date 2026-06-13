@@ -66,19 +66,30 @@ bool Can::UpdateData(
   } else if (idx == static_cast<uint32_t>(CAN_ID::YAW_RX)) {
     ParseLKMotorFeedback(can_data, data.yaw_act_);
     data.yaw_act_.position_ -= yaw_offset;
+  // --- PITCH: DM3507 feedback (output-shaft → GR=1)
   } else if (idx == static_cast<uint32_t>(CAN_ID::PITCH_RX)) {
-    ParseLKMotorFeedback(can_data, data.pitch_act_);
+    ParseDMMotorFeedback(
+      can_data, data.pitch_act_,
+      DM3507_PMAX, DM3507_VMAX, DM3507_TMAX, 1.0f);
     data.pitch_act_.position_ -= pitch_offset;
 
-  // --- DM2325 feedback
+  // --- DM2325 feedback (chassis wheels)
   } else if (idx == static_cast<uint32_t>(CAN_ID::CHASSIS_FRONT_RIGHT_RX)) {
-    ParseDMMotorFeedback(can_data, data.chassis_fr_act_);
+    ParseDMMotorFeedback(
+      can_data, data.chassis_fr_act_,
+      DM2325_PMAX, DM2325_VMAX, DM2325_TMAX, DM2325_GR);
   } else if (idx == static_cast<uint32_t>(CAN_ID::CHASSIS_FRONT_LEFT_RX)) {
-    ParseDMMotorFeedback(can_data, data.chassis_fl_act_);
+    ParseDMMotorFeedback(
+      can_data, data.chassis_fl_act_,
+      DM2325_PMAX, DM2325_VMAX, DM2325_TMAX, DM2325_GR);
   } else if (idx == static_cast<uint32_t>(CAN_ID::CHASSIS_BACK_RIGHT_RX)) {
-    ParseDMMotorFeedback(can_data, data.chassis_br_act_);
+    ParseDMMotorFeedback(
+      can_data, data.chassis_br_act_,
+      DM2325_PMAX, DM2325_VMAX, DM2325_TMAX, DM2325_GR);
   } else if (idx == static_cast<uint32_t>(CAN_ID::CHASSIS_BACK_LEFT_RX)) {
-    ParseDMMotorFeedback(can_data, data.chassis_bl_act_);
+    ParseDMMotorFeedback(
+      can_data, data.chassis_bl_act_,
+      DM2325_PMAX, DM2325_VMAX, DM2325_TMAX, DM2325_GR);
 
   } else {
     return false;
@@ -277,6 +288,33 @@ void Can::PrepareDMMotorVelocityCmd(float velocity, uint8_t can_data[8])
   can_data[7] = 0x00;
 }
 
+static uint16_t FloatToUint(float x, float lo, float hi, uint8_t bits)
+{
+  if (x < lo) { x = lo; }
+  if (x > hi) { x = hi; }
+  return static_cast<uint16_t>(
+    (x - lo) * (static_cast<float>((1u << bits) - 1u) / (hi - lo)));
+}
+
+void Can::PrepareDMMotorMITCmd(
+  float pos, float vel, float kp, float kd, float tff,
+  float pmax, float vmax, float tmax, uint8_t can_data[8])
+{
+  uint16_t p = FloatToUint(pos, -pmax, pmax, 16);
+  uint16_t v = FloatToUint(vel, -vmax, vmax, 12);
+  uint16_t kp_u = FloatToUint(kp, 0.0f, DM_KP_MAX, 12);
+  uint16_t kd_u = FloatToUint(kd, 0.0f, DM_KD_MAX, 12);
+  uint16_t t = FloatToUint(tff, -tmax, tmax, 12);
+  can_data[0] = static_cast<uint8_t>(p >> 8);
+  can_data[1] = static_cast<uint8_t>(p & 0xFF);
+  can_data[2] = static_cast<uint8_t>(v >> 4);
+  can_data[3] = static_cast<uint8_t>(((v & 0x0F) << 4) | (kp_u >> 8));
+  can_data[4] = static_cast<uint8_t>(kp_u & 0xFF);
+  can_data[5] = static_cast<uint8_t>(kd_u >> 4);
+  can_data[6] = static_cast<uint8_t>(((kd_u & 0x0F) << 4) | (t >> 8));
+  can_data[7] = static_cast<uint8_t>(t & 0xFF);
+}
+
 void Can::ParseLKMotorFeedback(const uint8_t can_data[8], MotorInfo & motor)
 {
   motor.temperature_ = static_cast<float>(can_data[1]);
@@ -293,16 +331,18 @@ void Can::ParseLKMotorFeedback(const uint8_t can_data[8], MotorInfo & motor)
   motor.position_ = raw_pos / 65535.0f * 2.0f * static_cast<float>(M_PI);  // uint16(0~65535) → 0~2π rad
 }
 
-void Can::ParseDMMotorFeedback(const uint8_t can_data[8], MotorInfo & motor)
+void Can::ParseDMMotorFeedback(
+  const uint8_t can_data[8], MotorInfo & motor,
+  float pmax, float vmax, float tmax, float gr)
 {
   uint16_t pos_raw = (static_cast<uint16_t>(can_data[1]) << 8) | can_data[2];
   uint16_t vel_raw = (static_cast<uint16_t>(can_data[3]) << 4) | (can_data[4] >> 4);
   uint16_t tor_raw = (static_cast<uint16_t>(can_data[4] & 0x0F) << 8) | can_data[5];
 
-  motor.position_ = (pos_raw / 65535.0f * 2.0f * DM_PMAX - DM_PMAX) / DM_GR;         // uint16(0~65535) → [-PMAX, +PMAX] → /GR
-  motor.velocity_ = vel_raw / 4095.0f * 2.0f * DM_VMAX - DM_VMAX;                    // uint12(0~4095) → [-VMAX, +VMAX] (already output shaft)
-  motor.torque_ = tor_raw / 4095.0f * 2.0f * DM_TMAX - DM_TMAX;                       // uint12(0~4095) → [-TMAX, +TMAX]
-  motor.temperature_mos_ = static_cast<float>(can_data[6]);                            // D[6]=T_MOS, D[7]=T_Rotor
+  motor.position_ = (pos_raw / 65535.0f * 2.0f * pmax - pmax) / gr;   // uint16(0~65535) → [-PMAX, +PMAX] → /GR
+  motor.velocity_ = vel_raw / 4095.0f * 2.0f * vmax - vmax;           // uint12(0~4095) → [-VMAX, +VMAX] (output shaft)
+  motor.torque_ = tor_raw / 4095.0f * 2.0f * tmax - tmax;             // uint12(0~4095) → [-TMAX, +TMAX]
+  motor.temperature_mos_ = static_cast<float>(can_data[6]);           // D[6]=T_MOS, D[7]=T_Rotor
 }
 
 }  // namespace rabcl
