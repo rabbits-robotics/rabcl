@@ -290,8 +290,8 @@ void Can::PrepareDMMotorVelocityCmd(float velocity, uint8_t can_data[8])
 
 static uint16_t FloatToUint(float x, float lo, float hi, uint8_t bits)
 {
-  if (x < lo) { x = lo; }
-  if (x > hi) { x = hi; }
+  if (x < lo) {x = lo;}
+  if (x > hi) {x = hi;}
   return static_cast<uint16_t>(
     (x - lo) * (static_cast<float>((1u << bits) - 1u) / (hi - lo)));
 }
