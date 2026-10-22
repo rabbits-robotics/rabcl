@@ -10,7 +10,8 @@ Rabbits Common Library。モータ・センサのドライバ、制御器、上�
 |---|---|
 | `component/` | モータ・センサ: JGA25-370（エンコーダ付き DC モータ）、LD-20MG（サーボ）、BNO055（IMU） |
 | `controller/` | 制御器: `OmniDrive`（オムニ 4 輪の速度分配）、`PdGravityFf`（重力補償付き PD） |
-| `interface/` | 通信フレーム: `Can`（LK / DAMIAO モータの CAN ペイロードの組み立てと解析）、`Uart`（上位コントローラとの固定長パケット） |
+| `interface/` | モータとの通信: `Can`（LK / DAMIAO の CAN ペイロードの組み立て `Prepare*` と解析 `Parse*`。ID の振り分けは各ファームが行う）。`Uart`（`Info` の固定レイアウト）は beta 専用で、beta を `protocol/` に移行したあと削除する |
+| `protocol/` | PC ⇔ ファームの共通プロトコル。フレーム化（ヘッダ、長さ、CRC-8）、メッセージ（`INFO` / `JOINT_STATE` / `IMU` / `SYSTEM` / `CHASSIS_VEL` / `JOINT_CMD` / `MODE`）の Encode / Decode、受信パーサ `Parser`。機体ごとの違いは関節番号と名前の対応だけで、rabcl は持たない（設計書 `docs/superpowers/specs/2026-10-22-robot-protocol-design.md`） |
 | `utils/` | `Info`（機体の指令・状態をまとめた構造体）、CAN ID の定数、数値ユーティリティ |
 
 通信の実体（CAN コントローラ、UART ペリフェラル）は持たない。`Can::Prepare*` が作る `uint8_t[8]` を各プラットフォームの CAN 送信に渡し、受信した 8 バイトを `Can::UpdateData` に渡す。

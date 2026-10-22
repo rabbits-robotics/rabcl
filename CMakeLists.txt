@@ -11,6 +11,8 @@ if(ESP_PLATFORM)
       src/controller/pd_gravity_ff.cpp
       src/interface/can.cpp
       src/interface/uart.cpp
+      src/protocol/parser.cpp
+      src/protocol/protocol.cpp
       src/utils/utils.cpp
     INCLUDE_DIRS include)
   return()
@@ -37,6 +39,8 @@ add_library(rabcl SHARED
   src/controller/pd_gravity_ff.cpp
   src/interface/uart.cpp
   src/interface/can.cpp
+  src/protocol/parser.cpp
+  src/protocol/protocol.cpp
   src/utils/utils.cpp
 )
 
@@ -89,6 +93,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_pd_gravity_ff test/test_pd_gravity_ff.cpp)
   target_link_libraries(test_pd_gravity_ff rabcl)
+
+  ament_add_gtest(test_protocol test/test_protocol.cpp)
+  target_link_libraries(test_protocol rabcl)
 endif()
 
 ament_package()
