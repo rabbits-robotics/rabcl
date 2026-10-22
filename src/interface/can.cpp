@@ -342,7 +342,18 @@ void Can::ParseDMMotorFeedback(
   motor.position_ = (pos_raw / 65535.0f * 2.0f * pmax - pmax) / gr;   // uint16(0~65535) → [-PMAX, +PMAX] → /GR
   motor.velocity_ = vel_raw / 4095.0f * 2.0f * vmax - vmax;           // uint12(0~4095) → [-VMAX, +VMAX] (output shaft)
   motor.torque_ = tor_raw / 4095.0f * 2.0f * tmax - tmax;             // uint12(0~4095) → [-TMAX, +TMAX]
-  motor.temperature_mos_ = static_cast<float>(can_data[6]);           // D[6]=T_MOS, D[7]=T_Rotor
+  motor.temperature_mos_ = static_cast<float>(can_data[6]);           // D[6]=T_MOS
+  motor.temperature_ = static_cast<float>(can_data[7]);               // D[7]=T_Rotor
+}
+
+uint8_t Can::DMFeedbackId(const uint8_t can_data[8])
+{
+  return can_data[0] & 0x0F;
+}
+
+uint8_t Can::DMFeedbackError(const uint8_t can_data[8])
+{
+  return (can_data[0] >> 4) & 0x0F;
 }
 
 }  // namespace rabcl

@@ -1,3 +1,4 @@
+#include <cmath>
 #include <gtest/gtest.h>
 #include "rabcl/interface/can.hpp"
 #include "rabcl/utils/type.hpp"
@@ -91,6 +92,51 @@ TEST_F(CanTest, PrepareDMMotorMITCmd)
   EXPECT_EQ(kp, 0);
   EXPECT_EQ(kd, 0);
   EXPECT_NEAR(t, 2047, 1);   // 0 over [-TMAX,TMAX], 12-bit → midpoint
+}
+
+TEST_F(CanTest, ParseDMMotorFeedbackDM4310Max)
+{
+  // DM4310 (legs): output-shaft values, GR=1 in decode. Max raw → +PMAX / +VMAX / +TMAX
+  uint8_t data[8] = {0x17, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x25, 0x30};
+  MotorInfo motor = {};
+  Can::ParseDMMotorFeedback(
+    data, motor, Can::DM4310_PMAX, Can::DM4310_VMAX, Can::DM4310_TMAX, 1.0f);
+  EXPECT_NEAR(motor.position_, Can::DM4310_PMAX, 0.01f);
+  EXPECT_NEAR(motor.velocity_, Can::DM4310_VMAX, 0.05f);
+  EXPECT_NEAR(motor.torque_, Can::DM4310_TMAX, 0.01f);
+  EXPECT_FLOAT_EQ(motor.temperature_mos_, 37.0f);  // 0x25
+  EXPECT_FLOAT_EQ(motor.temperature_, 48.0f);      // 0x30 = T_Rotor
+}
+
+TEST_F(CanTest, ParseDMMotorFeedbackMidpointIsZero)
+{
+  uint8_t data[8] = {0x07, 0x7F, 0xFF, 0x7F, 0xF7, 0xFF, 0x00, 0x00};
+  MotorInfo motor = {};
+  Can::ParseDMMotorFeedback(
+    data, motor, Can::DM4310_PMAX, Can::DM4310_VMAX, Can::DM4310_TMAX, 1.0f);
+  EXPECT_NEAR(motor.position_, 0.0f, 0.001f);
+  EXPECT_NEAR(motor.velocity_, 0.0f, 0.01f);
+  EXPECT_NEAR(motor.torque_, 0.0f, 0.01f);
+}
+
+TEST_F(CanTest, DMFeedbackIdAndError)
+{
+  // D[0] = ID | ERR << 4
+  uint8_t data[8] = {0x87, 0, 0, 0, 0, 0, 0, 0};
+  EXPECT_EQ(Can::DMFeedbackId(data), 0x07);
+  EXPECT_EQ(Can::DMFeedbackError(data), 0x08);  // 8 = overvoltage
+}
+
+TEST_F(CanTest, ParseLKMotorFeedbackPublic)
+{
+  // D[1]=temp, D[2:3]=current(0.01A), D[4:5]=speed(dps), D[6:7]=pos(uint16 → 0~2π)
+  uint8_t data[8] = {0xA1, 0x28, 0x64, 0x00, 0xB4, 0x00, 0xFF, 0xFF};
+  MotorInfo motor = {};
+  Can::ParseLKMotorFeedback(data, motor);
+  EXPECT_FLOAT_EQ(motor.temperature_, 40.0f);
+  EXPECT_NEAR(motor.current_, 1.0f, 0.001f);
+  EXPECT_NEAR(motor.velocity_, static_cast<float>(M_PI), 0.001f);  // 180 dps
+  EXPECT_NEAR(motor.position_, 2.0f * static_cast<float>(M_PI), 0.001f);
 }
 
 TEST_F(CanTest, UpdateDataUnknownIdx)

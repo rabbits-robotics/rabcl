@@ -21,6 +21,11 @@ public:
   static constexpr float DM3507_VMAX = 50.0f;    // [rad/s]
   static constexpr float DM3507_TMAX = 5.0f;     // [Nm]
   static constexpr float DM3507_GR = 7.0f;       // gear ratio (informational)
+  // DM4310 / DM-J4310-2EC (gamma legs); output-shaft values → GR=1 in decode
+  static constexpr float DM4310_PMAX = 12.5f;   // [rad]
+  static constexpr float DM4310_VMAX = 30.0f;   // [rad/s]
+  static constexpr float DM4310_TMAX = 10.0f;   // [Nm]
+  static constexpr float DM4310_GR = 10.0f;     // gear ratio (informational)
   // MIT-mode gain ranges (DAMIAO standard)
   static constexpr float DM_KP_MAX = 500.0f;
   static constexpr float DM_KD_MAX = 5.0f;
@@ -68,11 +73,17 @@ public:
     float pmax, float vmax, float tmax,
     uint8_t can_data[8]);
 
-private:
+  // Feedback parsers. UpdateData() dispatches by the beta CAN_ID table; firmware with its own
+  // ID table (gamma) calls these directly.
   static void ParseLKMotorFeedback(const uint8_t can_data[8], MotorInfo & motor);
   static void ParseDMMotorFeedback(
     const uint8_t can_data[8], MotorInfo & motor,
     float pmax, float vmax, float tmax, float gr);
+  // DM feedback D[0] = ID | ERR << 4
+  static uint8_t DMFeedbackId(const uint8_t can_data[8]);
+  // 0: disabled, 1: enabled, 8: overvoltage, 9: undervoltage, A: overcurrent,
+  // B: MOS overtemperature, C: rotor overtemperature, D: communication lost, E: overload
+  static uint8_t DMFeedbackError(const uint8_t can_data[8]);
 };
 }  // namespace rabcl
 

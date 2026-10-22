@@ -68,7 +68,7 @@ public:
   float velocity_;        // [rad/s]
   float torque_;          // [Nm] DM only
   float current_;         // [A] LK only
-  float temperature_;     // [°C]
+  float temperature_;     // [°C] LK: motor, DM: rotor
   float temperature_mos_; // [°C] DM only
 };
 
