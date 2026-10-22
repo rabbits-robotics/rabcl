@@ -1,4 +1,21 @@
 cmake_minimum_required(VERSION 3.8)
+
+# ESP-IDF のコンポーネントとして（ファームの components/rabcl に submodule で置いて）ビルドする場合
+if(ESP_PLATFORM)
+  idf_component_register(
+    SRCS
+      src/component/bno055.cpp
+      src/component/jga25_370.cpp
+      src/component/ld_20mg.cpp
+      src/controller/omni_drive.cpp
+      src/controller/pd_gravity_ff.cpp
+      src/interface/can.cpp
+      src/interface/uart.cpp
+      src/utils/utils.cpp
+    INCLUDE_DIRS include)
+  return()
+endif()
+
 project(rabcl)
 
 # Default to C++17
