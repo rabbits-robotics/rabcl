@@ -1,9 +1,8 @@
 # rabcl
+[![CI](https://github.com/rabbits-robotics/rabcl/actions/workflows/ci.yml/badge.svg)](https://github.com/rabbits-robotics/rabcl/actions/workflows/ci.yml)
 
 Rabbits Common Library。モータ・センサのドライバ、制御器、上位コントローラとの通信フレームを、ファームウェア（STM32 / ESP32）と ROS 2 の両方から使う C++17 ライブラリ。
 特定のマイコンや OS に依存せず（`<cstdint>` と標準ライブラリのみ）、機体固有の値（CAN ID、ゲイン、ピン）は持たない。
-
-[![CI](https://github.com/rabbits-robotics/rabcl/actions/workflows/ci.yml/badge.svg)](https://github.com/rabbits-robotics/rabcl/actions/workflows/ci.yml)
 
 ## 構成
 
@@ -47,7 +46,7 @@ colcon test --packages-select rabcl
 colcon test-result --verbose
 ```
 
-テストは `test/` に gtest で置いている。コード整形は ament の uncrustify に従う。
+テストは `test/` に gtest で置いている。rabcl 系のリポジトリはユニットテストを必ず書き、CI で実行する（handbook の [common-lib.md](https://github.com/rabbits-robotics/.github/blob/main/docs/common-lib.md)）。コード整形は ament の uncrustify に従う。
 
 ## ライセンス
 
