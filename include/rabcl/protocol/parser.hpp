@@ -1,5 +1,6 @@
 // 受信パーサ。バイト列を何回に分けて渡してもよく、フレームが揃うたびにハンドラを呼ぶ。
-// 動的確保なし。ISR / タスク / PC のどこからでも使えるように、コールバックは関数ポインタ + ctx。
+// 動的確保も再帰もなし（内部バッファ 260 B のみ）。ISR / タスク / PC のどこからでも使えるように、
+// コールバックは関数ポインタ + ctx。
 #ifndef RABCL__PROTOCOL__PARSER_HPP_
 #define RABCL__PROTOCOL__PARSER_HPP_
 
@@ -35,8 +36,11 @@ private:
     BODY,  // payload + crc
   };
 
-  void FeedByte(uint8_t byte, FrameHandler on_frame, void * ctx);
-  void OnFrameComplete(FrameHandler on_frame, void * ctx);
+  // 1 バイト進める。フレームが揃ったら true
+  bool Push(uint8_t byte);
+  // frame_[0..pos_) に揃ったフレームを処理する。CRC 不一致なら取り込んだバイト列を
+  // 1 バイトずらして同じバッファ内で走査し直す（コピーも再帰もしない）
+  void Complete(FrameHandler on_frame, void * ctx);
 
   State state_;
   uint8_t frame_[MAX_FRAME];

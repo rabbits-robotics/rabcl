@@ -347,6 +347,47 @@ TEST(Parser, ZeroLengthPayloadFrame)
   EXPECT_TRUE(rx.frames[0].payload.empty());
 }
 
+TEST(Parser, NestedCrcFailuresDoNotLoseFollowingFrame)
+{
+  // 外側のフレーム（len 255）の body に、CRC の壊れた 5 B のフレームを 51 個詰める。
+  // 再走査が 1 B ずつずれて 50 段以上入れ子になる最悪形。最後の正しいフレームだけが受かる
+  std::vector<uint8_t> bytes = {HEADER_0, HEADER_1, 0x01, 0xFF};
+  uint8_t bad[5] = {HEADER_0, HEADER_1, 0x01, 0x00, 0x00};
+  bad[4] = static_cast<uint8_t>(Crc8(&bad[2], 2) ^ 0xFF);
+  for (int i = 0; i < 51; ++i) {
+    bytes.insert(bytes.end(), bad, bad + 5);
+  }
+  bytes.push_back(0x00);  // 外側の body + crc = 256 B に揃える
+  const auto good = ModeFrame();
+  bytes.insert(bytes.end(), good.begin(), good.end());
+
+  Parser parser;
+  Received rx;
+  parser.Feed(bytes.data(), bytes.size(), Received::Handler, &rx);
+  ASSERT_EQ(rx.frames.size(), 1u);
+  EXPECT_EQ(rx.frames[0].type, Type::MODE);
+  EXPECT_GE(parser.crc_errors(), 50u);
+}
+
+TEST(Parser, MaxLengthFrameRoundTrip)
+{
+  uint8_t frame[MAX_FRAME];
+  frame[0] = HEADER_0;
+  frame[1] = HEADER_1;
+  frame[2] = 0x02;
+  frame[3] = 0xFF;
+  for (int i = 0; i < 255; ++i) {
+    frame[4 + i] = static_cast<uint8_t>(i);
+  }
+  frame[4 + 255] = Crc8(&frame[2], 257);
+  Parser parser;
+  Received rx;
+  parser.Feed(frame, sizeof(frame), Received::Handler, &rx);
+  ASSERT_EQ(rx.frames.size(), 1u);
+  ASSERT_EQ(rx.frames[0].payload.size(), 255u);
+  EXPECT_EQ(rx.frames[0].payload[254], 254);
+}
+
 TEST(Parser, ResetClearsPartialFrame)
 {
   Parser parser;
