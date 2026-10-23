@@ -271,6 +271,18 @@ void Can::PrepareDMMotorEnable(uint8_t can_data[8])
   can_data[7] = 0xFC;
 }
 
+void Can::PrepareDMMotorDisable(uint8_t can_data[8])
+{
+  can_data[0] = 0xFF;
+  can_data[1] = 0xFF;
+  can_data[2] = 0xFF;
+  can_data[3] = 0xFF;
+  can_data[4] = 0xFF;
+  can_data[5] = 0xFF;
+  can_data[6] = 0xFF;
+  can_data[7] = 0xFD;
+}
+
 void Can::PrepareDMMotorVelocityCmd(float velocity, uint8_t can_data[8])
 {
   union {

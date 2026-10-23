@@ -191,6 +191,18 @@ size_t EncodeMode(const ModeCmd * modes, uint8_t count, uint8_t * buf, size_t ca
   return EndFrame(buf, len);
 }
 
+size_t EncodeBodyPose(const BodyPose & pose, uint8_t * buf, size_t cap)
+{
+  uint8_t * p = BeginFrame(Type::BODY_POSE, BODY_POSE_LEN, buf, cap);
+  if (p == nullptr) {
+    return 0;
+  }
+  PutF32(p, pose.height);
+  PutF32(p, pose.roll);
+  PutF32(p, pose.pitch);
+  return EndFrame(buf, BODY_POSE_LEN);
+}
+
 // --- Decode ---
 
 bool DecodeInfo(const uint8_t * payload, uint8_t len, Info & info)
@@ -307,6 +319,18 @@ bool DecodeMode(const uint8_t * payload, uint8_t len, ModeCmd * modes, uint8_t m
     modes[i].value = *p++;
   }
   count = n;
+  return true;
+}
+
+bool DecodeBodyPose(const uint8_t * payload, uint8_t len, BodyPose & pose)
+{
+  if (len != BODY_POSE_LEN) {
+    return false;
+  }
+  const uint8_t * p = payload;
+  pose.height = GetF32(p);
+  pose.roll = GetF32(p);
+  pose.pitch = GetF32(p);
   return true;
 }
 

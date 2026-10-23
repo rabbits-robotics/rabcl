@@ -167,6 +167,27 @@ TEST(Protocol, SystemRoundTrip)
   EXPECT_EQ(out.uptime_ms, 123456u);
 }
 
+TEST(Protocol, BodyPoseRoundTrip)
+{
+  uint8_t buf[MAX_FRAME];
+  ASSERT_EQ(EncodeBodyPose({0.3f, -0.1f, 0.05f}, buf, sizeof(buf)), 5u + 12u);
+  EXPECT_EQ(buf[2], static_cast<uint8_t>(Type::BODY_POSE));
+  EXPECT_EQ(buf[2], 0x84);
+  BodyPose out = {};
+  ASSERT_TRUE(DecodeBodyPose(&buf[4], buf[3], out));
+  EXPECT_FLOAT_EQ(out.height, 0.3f);
+  EXPECT_FLOAT_EQ(out.roll, -0.1f);
+  EXPECT_FLOAT_EQ(out.pitch, 0.05f);
+}
+
+TEST(Protocol, BodyPoseDecodeRejectsWrongLen)
+{
+  uint8_t buf[MAX_FRAME];
+  ASSERT_GT(EncodeBodyPose({0.5f, 0.0f, 0.0f}, buf, sizeof(buf)), 0u);
+  BodyPose out = {};
+  EXPECT_FALSE(DecodeBodyPose(&buf[4], 11, out));
+}
+
 TEST(Protocol, ChassisVelRoundTrip)
 {
   uint8_t buf[MAX_FRAME];

@@ -64,6 +64,7 @@ public:
     uint8_t can_data[8]);
   static void PrepareLKMotorReadMotorState2(uint8_t can_data[8]);  // 0x9C: temp/current/speed/position (same format as 0xA4 response)
   static void PrepareDMMotorEnable(uint8_t can_data[8]);
+  static void PrepareDMMotorDisable(uint8_t can_data[8]);
   static void PrepareDMMotorVelocityCmd(
     float velocity /* [rad/s, output shaft] */,
     uint8_t can_data[8]);

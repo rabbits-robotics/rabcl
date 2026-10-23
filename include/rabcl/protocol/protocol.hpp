@@ -32,6 +32,7 @@ enum class Type : uint8_t
   CHASSIS_VEL = 0x81,
   JOINT_CMD = 0x82,
   MODE = 0x83,
+  BODY_POSE = 0x84,
 };
 
 struct Info
@@ -88,6 +89,13 @@ struct ModeCmd
   uint8_t value;
 };
 
+struct BodyPose
+{
+  float height;  // 0〜1（0 = 最低車高）
+  float roll;    // [rad] 正 = 右が下がる（REP-103）
+  float pitch;   // [rad] 正 = 前が下がる
+};
+
 constexpr uint8_t INFO_LEN = 10;
 constexpr uint8_t JOINT_STATE_ITEM_LEN = 18;
 constexpr uint8_t IMU_LEN = 36;
@@ -95,6 +103,7 @@ constexpr uint8_t SYSTEM_LEN = 12;
 constexpr uint8_t CHASSIS_VEL_LEN = 12;
 constexpr uint8_t JOINT_CMD_ITEM_LEN = 21;
 constexpr uint8_t MODE_ITEM_LEN = 2;
+constexpr uint8_t BODY_POSE_LEN = 12;
 
 uint8_t Crc8(const uint8_t * data, size_t len);
 
@@ -106,6 +115,7 @@ size_t EncodeSystem(const System & system, uint8_t * buf, size_t cap);
 size_t EncodeChassisVel(const ChassisVel & vel, uint8_t * buf, size_t cap);
 size_t EncodeJointCmd(const JointCmd * cmds, uint8_t count, uint8_t * buf, size_t cap);
 size_t EncodeMode(const ModeCmd * modes, uint8_t count, uint8_t * buf, size_t cap);
+size_t EncodeBodyPose(const BodyPose & pose, uint8_t * buf, size_t cap);
 
 // デコード: payload（len B）から構造体へ。len がレイアウトと合わなければ false。
 // 配列型は count が max を超えると false
@@ -120,6 +130,7 @@ bool DecodeJointCmd(
 bool DecodeMode(
   const uint8_t * payload, uint8_t len, ModeCmd * modes, uint8_t max,
   uint8_t & count);
+bool DecodeBodyPose(const uint8_t * payload, uint8_t len, BodyPose & pose);
 
 }  // namespace rabcl::protocol
 

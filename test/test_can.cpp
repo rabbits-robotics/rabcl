@@ -73,6 +73,16 @@ TEST_F(CanTest, UpdateDataPitchRx)
   EXPECT_FLOAT_EQ(info.pitch_act_.temperature_mos_, 37.0f);         // 0x25 = 37
 }
 
+TEST_F(CanTest, PrepareDMMotorDisable)
+{
+  uint8_t out[8] = {};
+  Can::PrepareDMMotorDisable(out);
+  for (int i = 0; i < 7; ++i) {
+    EXPECT_EQ(out[i], 0xFF) << "byte " << i;
+  }
+  EXPECT_EQ(out[7], 0xFD);
+}
+
 TEST_F(CanTest, PrepareDMMotorMITCmd)
 {
   // pos=0, vel=0, kp=0, kd=0, tff=0 → pos/vel/tff land on midpoints, kp/kd = 0
