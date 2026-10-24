@@ -468,6 +468,312 @@ TEST(BNO055Legacy, UpdateAccel)
 }
 
 
+// --- BNO055UartDriver: UART のバイト列で偽 BNO055 とやり取り ---
+
+// 台本どおりに答える偽 BNO055（UART）。受けた要求のバイト列を記録する
+class FakeUartBno055
+{
+public:
+  // 要求（4 + len B）を受けて応答のバイト列を返す。answer が false なら何も返さない
+  std::vector<uint8_t> Respond(const uint8_t * req, size_t len)
+  {
+    requests.emplace_back(req, req + len);
+    if (!answer) {
+      return {};
+    }
+    std::vector<uint8_t> out;
+    if (req[1] == 0x00) {  // 書き
+      out = {0xEE, 0x01};
+      return out;
+    }
+    const uint8_t reg = req[2];
+    const uint8_t n = req[3];
+    out.push_back(0xBB);
+    out.push_back(n);
+    for (uint8_t i = 0; i < n; ++i) {
+      uint8_t v = 0;
+      if (reg == 0x00) {
+        v = chip_id;
+      } else if (reg == 0x39) {
+        v = 5;
+      } else if (reg == 0x38) {
+        v = 0;
+      } else if (reg == 0x35) {
+        v = 0xC0;
+      } else if (reg == 0x14) {
+        v = data[i];
+      }
+      out.push_back(v);
+    }
+    return out;
+  }
+
+  std::vector<std::vector<uint8_t>> requests;
+  bool answer = true;
+  uint8_t chip_id = 0xA0;
+  uint8_t data[12] = {};
+};
+
+class BNO055UartDriverTest : public ::testing::Test
+{
+protected:
+  // Tick → 偽 BNO055 → Feed を回す。応答は fake が返した分を一度に Feed
+  int Run(BNO055UartDriver & driver, uint32_t from_ms, uint32_t to_ms)
+  {
+    int samples = 0;
+    for (uint32_t t = from_ms; t <= to_ms; ++t) {
+      uint8_t tx[16];
+      const size_t n = driver.Tick(t, tx, sizeof(tx));
+      if (n == 0) {
+        continue;
+      }
+      const std::vector<uint8_t> reply = fake_.Respond(tx, n);
+      if (!reply.empty() && driver.Feed(reply.data(), reply.size(), t, sample_)) {
+        ++samples;
+      }
+    }
+    return samples;
+  }
+
+  static std::vector<uint8_t> Bytes(std::initializer_list<uint8_t> b)
+  {
+    return std::vector<uint8_t>(b);
+  }
+
+  FakeUartBno055 fake_;
+  BNO055Sample sample_ = {};
+};
+
+TEST_F(BNO055UartDriverTest, BootSequenceBytes)
+{
+  BNO055UartDriver driver(BNO055Config{});
+  Run(driver, 0, 800);
+  ASSERT_GE(fake_.requests.size(), 8u);
+  EXPECT_EQ(fake_.requests[0], Bytes({0xAA, 0x01, 0x00, 0x01}));
+  EXPECT_EQ(fake_.requests[1], Bytes({0xAA, 0x00, 0x3D, 0x01, 0x00}));
+  EXPECT_EQ(fake_.requests[2], Bytes({0xAA, 0x00, 0x07, 0x01, 0x00}));
+  EXPECT_EQ(fake_.requests[3], Bytes({0xAA, 0x00, 0x3B, 0x01, 0x06}));
+  EXPECT_EQ(fake_.requests[4], Bytes({0xAA, 0x00, 0x41, 0x01, 0x24}));
+  EXPECT_EQ(fake_.requests[5], Bytes({0xAA, 0x00, 0x42, 0x01, 0x00}));
+  EXPECT_EQ(fake_.requests[6], Bytes({0xAA, 0x00, 0x3D, 0x01, 0x08}));
+  EXPECT_EQ(fake_.requests[7], Bytes({0xAA, 0x01, 0x39, 0x01}));
+  EXPECT_TRUE(driver.sequencer().running());
+}
+
+TEST_F(BNO055UartDriverTest, ExpectedResponseLen)
+{
+  BNO055UartDriver driver(BNO055Config{});
+  EXPECT_EQ(driver.expected_response_len(), 0u);
+  uint8_t tx[16];
+  ASSERT_EQ(driver.Tick(700, tx, sizeof(tx)), 4u);  // CHIP_ID 読み
+  EXPECT_EQ(driver.expected_response_len(), 3u);
+  const uint8_t id[3] = {0xBB, 0x01, 0xA0};
+  driver.Feed(id, 3, 700, sample_);
+  EXPECT_EQ(driver.expected_response_len(), 0u);
+  ASSERT_EQ(driver.Tick(701, tx, sizeof(tx)), 5u);  // OPR_MODE 書き
+  EXPECT_EQ(driver.expected_response_len(), 2u);
+  const uint8_t ack[2] = {0xEE, 0x01};
+  driver.Feed(ack, 2, 701, sample_);
+  Run(driver, 702, 800);
+  ASSERT_TRUE(driver.sequencer().running());
+  Run(driver, 801, 810);  // RUNNING は 731 ms から 10 ms ごと → 801 で読み、次は 811
+  ASSERT_EQ(driver.Tick(811, tx, sizeof(tx)), 4u);  // データ読み
+  EXPECT_EQ(driver.expected_response_len(), 14u);
+}
+
+TEST_F(BNO055UartDriverTest, SampleFromSplitBytes)
+{
+  fake_.data[4] = 900 & 0xFF;
+  fake_.data[5] = 900 >> 8;
+  BNO055UartDriver driver(BNO055Config{});
+  Run(driver, 0, 800);
+  ASSERT_TRUE(driver.sequencer().running());
+  uint8_t tx[16];
+  Run(driver, 801, 810);
+  ASSERT_EQ(driver.Tick(811, tx, sizeof(tx)), 4u);
+  const std::vector<uint8_t> reply = fake_.Respond(tx, 4);
+  ASSERT_EQ(reply.size(), 14u);
+  EXPECT_FALSE(driver.Feed(reply.data(), 3, 811, sample_));
+  EXPECT_TRUE(driver.Feed(reply.data() + 3, 11, 812, sample_));
+  EXPECT_FLOAT_EQ(sample_.gyro[2], 1.0f);
+  EXPECT_EQ(driver.last_request_ms(), 811u);
+}
+
+TEST_F(BNO055UartDriverTest, LateResponseAfterTimeoutIsIgnored)
+{
+  BNO055UartDriver driver(BNO055Config{});
+  Run(driver, 0, 800);
+  ASSERT_TRUE(driver.sequencer().running());
+  uint8_t tx[16];
+  Run(driver, 801, 810);
+  ASSERT_EQ(driver.Tick(811, tx, sizeof(tx)), 4u);  // データ読み。応答しない
+  const std::vector<uint8_t> late = fake_.Respond(tx, 4);
+  // 20 ms 後に再送される
+  size_t resent = 0;
+  for (uint32_t t = 812; t <= 840; ++t) {
+    resent = driver.Tick(t, tx, sizeof(tx));
+    if (resent > 0) {
+      break;
+    }
+  }
+  ASSERT_EQ(resent, 4u);
+  EXPECT_EQ(driver.sequencer().error_count(), 1u);
+  // 再送の直後に「前の応答」が届いても、形が合うので正当な応答として受ける（内容は同じ）。
+  // 待っていないときに届いたバイトは捨てられる: 応答を 2 回続けて入れると 2 回目は無視
+  EXPECT_TRUE(driver.Feed(late.data(), late.size(), 841, sample_));
+  EXPECT_FALSE(driver.Feed(late.data(), late.size(), 842, sample_));
+  EXPECT_FALSE(driver.sequencer().waiting());
+  EXPECT_EQ(driver.sequencer().error_count(), 0u);
+}
+
+TEST_F(BNO055UartDriverTest, GarbageWhileIdleIsIgnored)
+{
+  BNO055UartDriver driver(BNO055Config{});
+  const uint8_t garbage[6] = {0xFF, 0xFF, 0xBB, 0x05, 0x01, 0x02};
+  EXPECT_FALSE(driver.Feed(garbage, sizeof(garbage), 100, sample_));
+  EXPECT_EQ(driver.sequencer().state(), BNO055Sequencer::State::BOOT_WAIT);
+  Run(driver, 101, 800);
+  EXPECT_TRUE(driver.sequencer().running());
+  EXPECT_EQ(driver.sequencer().error_count(), 0u);
+}
+
+TEST_F(BNO055UartDriverTest, SoftResetIsSentWithoutWaiting)
+{
+  BNO055UartDriver driver(BNO055Config{});
+  fake_.chip_id = 0x55;  // CHIP_ID が合わない → 連続エラー → ソフトリセット
+  Run(driver, 0, 1000);
+  bool reset_seen = false;
+  for (const auto & req : fake_.requests) {
+    if (req == Bytes({0xAA, 0x00, 0x3F, 0x01, 0x20})) {
+      reset_seen = true;
+    }
+  }
+  EXPECT_TRUE(reset_seen);
+  EXPECT_GE(driver.sequencer().reinit_count(), 1u);
+  EXPECT_EQ(driver.expected_response_len(), 0u);
+}
+
+TEST_F(BNO055UartDriverTest, LastRequestMs)
+{
+  BNO055UartDriver driver(BNO055Config{});
+  uint8_t tx[16];
+  EXPECT_EQ(driver.Tick(500, tx, sizeof(tx)), 0u);
+  ASSERT_EQ(driver.Tick(1234, tx, sizeof(tx)), 4u);
+  EXPECT_EQ(driver.last_request_ms(), 1234u);
+}
+
+// --- BNO055I2cDriver: 抽象レジスタバスの偽実装 ---
+
+class FakeRegisterBus : public BNO055RegisterBus
+{
+public:
+  FakeRegisterBus()
+  {
+    regs[0x00] = 0xA0;
+    regs[0x39] = 5;
+    regs[0x35] = 0xC0;
+  }
+  bool Read(uint8_t reg, uint8_t * data, uint8_t len) override
+  {
+    reads.emplace_back(reg, len);
+    if (fail_next > 0) {
+      --fail_next;
+      return false;
+    }
+    for (uint8_t i = 0; i < len; ++i) {
+      data[i] = regs[static_cast<uint8_t>(reg + i)];
+    }
+    return true;
+  }
+  bool Write(uint8_t reg, const uint8_t * data, uint8_t len) override
+  {
+    writes.emplace_back(reg, std::vector<uint8_t>(data, data + len));
+    if (fail_next > 0) {
+      --fail_next;
+      return false;
+    }
+    for (uint8_t i = 0; i < len; ++i) {
+      regs[static_cast<uint8_t>(reg + i)] = data[i];
+    }
+    return true;
+  }
+
+  uint8_t regs[256] = {};
+  std::vector<std::pair<uint8_t, uint8_t>> reads;
+  std::vector<std::pair<uint8_t, std::vector<uint8_t>>> writes;
+  int fail_next = 0;
+};
+
+class BNO055I2cDriverTest : public ::testing::Test
+{
+protected:
+  int Run(BNO055I2cDriver & driver, uint32_t from_ms, uint32_t to_ms)
+  {
+    int samples = 0;
+    for (uint32_t t = from_ms; t <= to_ms; ++t) {
+      if (driver.Tick(t, sample_)) {
+        ++samples;
+      }
+    }
+    return samples;
+  }
+
+  FakeRegisterBus bus_;
+  BNO055Sample sample_ = {};
+};
+
+TEST_F(BNO055I2cDriverTest, BootSequenceOnBus)
+{
+  BNO055I2cDriver driver(BNO055Config{}, bus_);
+  Run(driver, 0, 800);
+  ASSERT_GE(bus_.writes.size(), 6u);
+  EXPECT_EQ(bus_.writes[0].first, 0x3D);
+  EXPECT_EQ(bus_.writes[0].second[0], 0x00);
+  EXPECT_EQ(bus_.writes[1].first, 0x07);
+  EXPECT_EQ(bus_.writes[2].first, 0x3B);
+  EXPECT_EQ(bus_.writes[3].first, 0x41);
+  EXPECT_EQ(bus_.writes[4].first, 0x42);
+  EXPECT_EQ(bus_.writes[5].first, 0x3D);
+  EXPECT_EQ(bus_.writes[5].second[0], 0x08);
+  ASSERT_GE(bus_.reads.size(), 2u);
+  EXPECT_EQ(bus_.reads[0].first, 0x00);
+  EXPECT_EQ(bus_.reads[1].first, 0x39);
+  EXPECT_TRUE(driver.sequencer().running());
+}
+
+TEST_F(BNO055I2cDriverTest, SampleFromBus)
+{
+  bus_.regs[0x18] = 900 & 0xFF;  // gyro z
+  bus_.regs[0x19] = 900 >> 8;
+  bus_.regs[0x1A] = 2827 & 0xFF;  // heading
+  bus_.regs[0x1B] = 2827 >> 8;
+  BNO055I2cDriver driver(BNO055Config{}, bus_);
+  Run(driver, 0, 800);
+  ASSERT_TRUE(driver.sequencer().running());
+  const int samples = Run(driver, 801, 1000);
+  EXPECT_EQ(samples, 20);
+  EXPECT_FLOAT_EQ(sample_.gyro[2], 1.0f);
+  EXPECT_NEAR(sample_.euler[0], static_cast<float>(M_PI), 1e-3f);
+}
+
+TEST_F(BNO055I2cDriverTest, BusFailureCountsAndResets)
+{
+  BNO055I2cDriver driver(BNO055Config{}, bus_);
+  Run(driver, 0, 800);
+  ASSERT_TRUE(driver.sequencer().running());
+  bus_.fail_next = 11;
+  Run(driver, 801, 1000);
+  EXPECT_EQ(driver.sequencer().reinit_count(), 1u);
+  bool reset_seen = false;
+  for (const auto & w : bus_.writes) {
+    if (w.first == 0x3F && w.second[0] == 0x20) {
+      reset_seen = true;
+    }
+  }
+  EXPECT_TRUE(reset_seen);
+  EXPECT_FALSE(driver.sequencer().running());
+}
+
 }  // namespace rabcl
 
 int main(int argc, char ** argv)

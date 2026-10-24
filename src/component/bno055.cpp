@@ -375,3 +375,109 @@ bool BNO055Sequencer::Complete(const BNO055Result & result, uint32_t now_ms, BNO
   return false;
 }
 }  // namespace rabcl
+
+// --- BNO055UartDriver ---
+
+namespace rabcl
+{
+BNO055UartDriver::BNO055UartDriver(const BNO055Config & config)
+: sequencer_(config)
+{
+}
+
+size_t BNO055UartDriver::Tick(uint32_t now_ms, uint8_t * out, size_t cap)
+{
+  BNO055Op op = {};
+  if (!sequencer_.Next(now_ms, op)) {
+    return 0;
+  }
+  const size_t need = op.kind == BNO055Op::Kind::READ ? 4 : 4 + static_cast<size_t>(op.len);
+  if (cap < need) {
+    return 0;
+  }
+  uart_.Reset();  // 新しい要求。途中まで来ていた古い応答は捨てる
+  const size_t n = op.kind == BNO055Op::Kind::READ ?
+    BNO055Uart::BuildRead(op.reg, op.len, out) :
+    BNO055Uart::BuildWrite(op.reg, op.data, op.len, out);
+  if (!op.expect_response) {
+    BNO055Result r = {};
+    r.ok = true;
+    BNO055Sample unused = {};
+    sequencer_.Complete(r, now_ms, unused);
+  }
+  return n;
+}
+
+bool BNO055UartDriver::Feed(
+  const uint8_t * data, size_t len, uint32_t now_ms, BNO055Sample & sample)
+{
+  for (size_t i = 0; i < len; ++i) {
+    if (!sequencer_.waiting()) {
+      return false;  // 待っていないバイトは捨てる
+    }
+    BNO055Uart::Response resp = {};
+    if (!uart_.Push(data[i], resp)) {
+      continue;
+    }
+    const BNO055Op & op = sequencer_.pending();
+    BNO055Result r = {};
+    if (resp.is_data) {
+      if (op.kind != BNO055Op::Kind::READ) {
+        r.ok = false;
+        r.error = static_cast<uint8_t>(BNO055Uart::Status::WRONG_START_BYTE);
+      } else if (resp.len != op.len) {
+        r.ok = false;
+        r.error = static_cast<uint8_t>(BNO055Uart::Status::MIN_LENGTH_ERROR);
+      } else {
+        r.ok = true;
+        r.len = resp.len;
+        for (uint8_t k = 0; k < resp.len; ++k) {
+          r.data[k] = resp.data[k];
+        }
+      }
+    } else {
+      const bool success = resp.status == BNO055Uart::Status::WRITE_SUCCESS &&
+        op.kind == BNO055Op::Kind::WRITE;
+      r.ok = success;
+      r.error = success ? BNO055Result::ERROR_NONE : static_cast<uint8_t>(resp.status);
+    }
+    return sequencer_.Complete(r, now_ms, sample);
+  }
+  return false;
+}
+
+size_t BNO055UartDriver::expected_response_len() const
+{
+  if (!sequencer_.waiting()) {
+    return 0;
+  }
+  const BNO055Op & op = sequencer_.pending();
+  return op.kind == BNO055Op::Kind::READ ? 2 + static_cast<size_t>(op.len) : 2;
+}
+
+// --- BNO055I2cDriver ---
+
+BNO055I2cDriver::BNO055I2cDriver(const BNO055Config & config, BNO055RegisterBus & bus)
+: sequencer_(config), bus_(bus)
+{
+}
+
+bool BNO055I2cDriver::Tick(uint32_t now_ms, BNO055Sample & sample)
+{
+  BNO055Op op = {};
+  if (!sequencer_.Next(now_ms, op)) {
+    return false;
+  }
+  BNO055Result r = {};
+  if (op.kind == BNO055Op::Kind::READ) {
+    r.ok = bus_.Read(op.reg, r.data, op.len);
+    r.len = op.len;
+  } else {
+    r.ok = bus_.Write(op.reg, op.data, op.len);
+  }
+  if (!r.ok) {
+    r.error = ERROR_BUS;
+  }
+  return sequencer_.Complete(r, now_ms, sample);
+}
+}  // namespace rabcl

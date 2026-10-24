@@ -2,6 +2,7 @@
 //   BNO055      レジスタ番地と生データの換算（バスに依らない）
 //   BNO055Uart  UART モード（PS1 = High、115200 8N1）のフレームの組み立てと受信パーサ
 //   BNO055Sequencer  起動シーケンス・周期読み・再初期化の状態機械（バスに依らない）
+//   BNO055UartDriver / BNO055I2cDriver  バスごとの薄い層（I2C は BNO055RegisterBus の実装を外から渡す）
 // 設計書: docs/superpowers/specs/2026-10-24-bno055-uart-design.md
 #ifndef RABCL__COMPONENT__BNO055_HPP_
 #define RABCL__COMPONENT__BNO055_HPP_
@@ -236,6 +237,57 @@ private:
   uint8_t sys_err_ = 0;
 };
 
+
+// --- バスごとの薄い層 ---
+
+// UART: BNO055Uart（フレーム）+ BNO055Sequencer。gamma で使う
+class BNO055UartDriver
+{
+public:
+  explicit BNO055UartDriver(const BNO055Config & config);
+
+  // 出すべき要求があれば out にフレームを書いて長さを返す（0 = 無し）。
+  // 応答を待たない操作（ソフトリセット）は書いた直後に完了扱いにする
+  size_t Tick(uint32_t now_ms, uint8_t * out, size_t cap);
+  // 受けたバイト列。応答待ち中のものだけ解釈し、サンプルが揃ったら true。待ちでないバイトは捨てる
+  bool Feed(const uint8_t * data, size_t len, uint32_t now_ms, BNO055Sample & sample);
+  // 応答待ち中: 期待する応答の全長（読み 2 + len、書き 2）。待ちでなければ 0
+  size_t expected_response_len() const;
+  uint32_t last_request_ms() const {return sequencer_.last_op_ms();}
+  const BNO055Sequencer & sequencer() const {return sequencer_;}
+  void Restart(uint32_t now_ms) {sequencer_.Restart(now_ms);}
+
+private:
+  BNO055Sequencer sequencer_;
+  BNO055Uart uart_;
+};
+
+// I2C など「レジスタをその場で読み書きできる」バスの口。実装は rabcl_esp32 などに置く
+class BNO055RegisterBus
+{
+public:
+  virtual ~BNO055RegisterBus() = default;
+  virtual bool Read(uint8_t reg, uint8_t * data, uint8_t len) = 0;
+  virtual bool Write(uint8_t reg, const uint8_t * data, uint8_t len) = 0;
+};
+
+// I2C: BNO055RegisterBus + BNO055Sequencer。同期なのでタイムアウトは無い（バスの実装が持つ）
+class BNO055I2cDriver
+{
+public:
+  static constexpr uint8_t ERROR_BUS = 1;
+
+  BNO055I2cDriver(const BNO055Config & config, BNO055RegisterBus & bus);
+
+  // 出すべき操作があればバスで実行して結果を状態機械に渡す。サンプルが揃ったら true
+  bool Tick(uint32_t now_ms, BNO055Sample & sample);
+  const BNO055Sequencer & sequencer() const {return sequencer_;}
+  void Restart(uint32_t now_ms) {sequencer_.Restart(now_ms);}
+
+private:
+  BNO055Sequencer sequencer_;
+  BNO055RegisterBus & bus_;
+};
 
 }  // namespace rabcl
 
