@@ -9,7 +9,7 @@ Rabbits Common Library。モータ・センサのドライバ、制御器、上�
 | ディレクトリ | 内容 |
 |---|---|
 | `component/` | モータ・センサ: JGA25-370（エンコーダ付き DC モータ）、LD-20MG（サーボ）、BNO055（IMU） |
-| `controller/` | 制御器: `OmniDrive`（オムニ 4 輪の速度分配）、`PdGravityFf`（重力補償付き PD） |
+| `controller/` | 制御器: `OmniDrive`（オムニ 4 輪の速度分配）、`PdGravityFf`（重力補償付き PD）、`BodyPosture`（車高・傾き → 4 脚の目標角）、`LegDamper`（脚のアクティブダンパ、MIT 指令）、`BodyAttitude`（IMU と首関節角から胴体姿勢を推定）、`Gimbal`（視線目標 − 胴体姿勢 → 首関節角）、`ViewTarget`（マウス相対移動の積算）、`CommandWatchdog`（指令途絶の監視） |
 | `interface/` | モータとの通信: `Can`（LK / DAMIAO の CAN ペイロードの組み立て `Prepare*` と解析 `Parse*`。ID の振り分けは各ファームが行う）。`Uart`（`Info` の固定レイアウト）は beta 専用で、beta を `protocol/` に移行したあと削除する |
 | `protocol/` | PC ⇔ ファームの共通プロトコル。フレーム化（ヘッダ、長さ、CRC-8）、メッセージ（`INFO` / `JOINT_STATE` / `IMU` / `SYSTEM` / `CHASSIS_VEL` / `JOINT_CMD` / `MODE`）の Encode / Decode、受信パーサ `Parser`。機体ごとの違いは関節番号と名前の対応だけで、rabcl は持たない（設計書 `docs/superpowers/specs/2026-10-22-robot-protocol-design.md`） |
 | `utils/` | `Info`（機体の指令・状態をまとめた構造体）、CAN ID の定数、数値ユーティリティ |
