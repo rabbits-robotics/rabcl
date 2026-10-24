@@ -100,3 +100,278 @@ void BNO055Uart::Reset()
   pos_ = 0;
 }
 }  // namespace rabcl
+
+// --- BNO055 の rad 換算 ---
+
+namespace rabcl
+{
+float BNO055::ScaleGyroRad(int16_t raw)
+{
+  return static_cast<float>(raw) / RAD_LSB;
+}
+
+float BNO055::ScaleEulerRad(int16_t raw)
+{
+  return static_cast<float>(raw) / RAD_LSB;
+}
+}  // namespace rabcl
+
+// --- BNO055Sequencer ---
+
+namespace rabcl
+{
+namespace
+{
+int16_t ReadI16(const uint8_t * p)
+{
+  return static_cast<int16_t>(static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8));
+}
+}  // namespace
+
+BNO055Sequencer::BNO055Sequencer(const BNO055Config & config)
+: config_(config)
+{
+}
+
+void BNO055Sequencer::Issue(const BNO055Op & op, uint32_t now_ms)
+{
+  pending_ = op;
+  issued_ms_ = now_ms;
+  waiting_ = op.expect_response;
+}
+
+void BNO055Sequencer::IssueWrite(uint8_t reg, uint8_t value, uint32_t now_ms, bool expect_response)
+{
+  BNO055Op op = {};
+  op.kind = BNO055Op::Kind::WRITE;
+  op.reg = reg;
+  op.len = 1;
+  op.data[0] = value;
+  op.expect_response = expect_response;
+  Issue(op, now_ms);
+}
+
+void BNO055Sequencer::IssueRead(uint8_t reg, uint8_t len, uint32_t now_ms)
+{
+  BNO055Op op = {};
+  op.kind = BNO055Op::Kind::READ;
+  op.reg = reg;
+  op.len = len;
+  op.expect_response = true;
+  Issue(op, now_ms);
+}
+
+void BNO055Sequencer::EnterBootWait(uint32_t now_ms)
+{
+  state_ = State::BOOT_WAIT;
+  boot_start_ms_ = now_ms;
+  waiting_ = false;
+  wait_until_ms_ = 0;
+}
+
+void BNO055Sequencer::Fail(uint32_t now_ms)
+{
+  waiting_ = false;
+  ++error_count_;
+  if (error_count_ > config_.max_consecutive_errors) {
+    Restart(now_ms);
+  }
+}
+
+void BNO055Sequencer::Succeed()
+{
+  waiting_ = false;
+  error_count_ = 0;
+}
+
+void BNO055Sequencer::Restart(uint32_t now_ms)
+{
+  (void)now_ms;
+  state_ = State::SOFT_RESET;
+  waiting_ = false;
+  wait_until_ms_ = 0;
+}
+
+bool BNO055Sequencer::Next(uint32_t now_ms, BNO055Op & op)
+{
+  if (waiting_) {
+    if (now_ms - issued_ms_ < config_.response_timeout_ms) {
+      return false;
+    }
+    Fail(now_ms);  // タイムアウト。同じ段をやり直す（しきい値ならソフトリセットへ）
+    if (state_ == State::SOFT_RESET) {
+      IssueWrite(REG_SYS_TRIGGER, TRIGGER_RST_SYS, now_ms, false);
+      op = pending_;
+      return true;
+    }
+  }
+  if (now_ms < wait_until_ms_) {
+    return false;
+  }
+  switch (state_) {
+    case State::BOOT_WAIT:
+      if (now_ms - boot_start_ms_ < config_.boot_wait_ms) {
+        return false;
+      }
+      state_ = State::CHECK_ID;
+      IssueRead(REG_CHIP_ID, 1, now_ms);
+      break;
+    case State::CHECK_ID:
+      IssueRead(REG_CHIP_ID, 1, now_ms);
+      break;
+    case State::TO_CONFIG:
+      IssueWrite(REG_OPR_MODE, BNO055::MODE_CONFIG, now_ms);
+      break;
+    case State::SET_PAGE:
+      IssueWrite(REG_PAGE_ID, 0x00, now_ms);
+      break;
+    case State::SET_UNITS:
+      IssueWrite(REG_UNIT_SEL, UNIT_SEL_RAD, now_ms);
+      break;
+    case State::SET_AXIS_MAP:
+      IssueWrite(REG_AXIS_MAP_CONFIG, config_.axis_map_config, now_ms);
+      break;
+    case State::SET_AXIS_SIGN:
+      IssueWrite(REG_AXIS_MAP_SIGN, config_.axis_map_sign, now_ms);
+      break;
+    case State::CHECK_CLOCK:
+      IssueRead(REG_SYS_CLK_STATUS, 1, now_ms);
+      break;
+    case State::SET_CLOCK:
+      IssueWrite(REG_SYS_TRIGGER, TRIGGER_CLK_SEL, now_ms);
+      break;
+    case State::TO_FUSION:
+      IssueWrite(REG_OPR_MODE, config_.operation_mode, now_ms);
+      break;
+    case State::CHECK_STATUS:
+      IssueRead(REG_SYS_STATUS, 1, now_ms);
+      break;
+    case State::READ_SYS_ERR:
+      IssueRead(REG_SYS_ERR, 1, now_ms);
+      break;
+    case State::RUNNING:
+      if (static_cast<int32_t>(now_ms - next_read_ms_) < 0) {
+        return false;
+      }
+      // 周期から大きく遅れたら今から数え直す（まとめて連射しない）
+      next_read_ms_ = (now_ms - next_read_ms_ > config_.sample_period_ms) ?
+        now_ms + config_.sample_period_ms : next_read_ms_ + config_.sample_period_ms;
+      ++read_count_;
+      if (read_count_ % CALIB_EVERY_READS == 0) {
+        IssueRead(REG_CALIB_STAT, 1, now_ms);
+      } else {
+        IssueRead(REG_GYR_DATA, DATA_LEN, now_ms);
+      }
+      break;
+    case State::SOFT_RESET:
+      IssueWrite(REG_SYS_TRIGGER, TRIGGER_RST_SYS, now_ms, false);
+      break;
+  }
+  op = pending_;
+  return true;
+}
+
+bool BNO055Sequencer::Complete(const BNO055Result & result, uint32_t now_ms, BNO055Sample & sample)
+{
+  if (state_ == State::SOFT_RESET) {
+    // リセットは応答を待たない。送られた時点で起動待ちへ
+    ++reinit_count_;
+    error_count_ = 0;
+    EnterBootWait(now_ms);
+    return false;
+  }
+  if (!waiting_) {
+    return false;  // 待っていない結果は捨てる
+  }
+  const bool is_read = pending_.kind == BNO055Op::Kind::READ;
+  if (!result.ok || (is_read && result.len != pending_.len)) {
+    Fail(now_ms);
+    return false;
+  }
+  switch (state_) {
+    case State::CHECK_ID:
+      if (result.data[0] != CHIP_ID) {
+        Fail(now_ms);
+        return false;
+      }
+      Succeed();
+      state_ = State::TO_CONFIG;
+      break;
+    case State::TO_CONFIG:
+      Succeed();
+      wait_until_ms_ = now_ms + CONFIG_SWITCH_MS;
+      state_ = State::SET_PAGE;
+      break;
+    case State::SET_PAGE:
+      Succeed();
+      state_ = State::SET_UNITS;
+      break;
+    case State::SET_UNITS:
+      Succeed();
+      state_ = State::SET_AXIS_MAP;
+      break;
+    case State::SET_AXIS_MAP:
+      Succeed();
+      state_ = State::SET_AXIS_SIGN;
+      break;
+    case State::SET_AXIS_SIGN:
+      Succeed();
+      state_ = config_.use_external_crystal ? State::CHECK_CLOCK : State::TO_FUSION;
+      break;
+    case State::CHECK_CLOCK:
+      if ((result.data[0] & 0x01) != 0) {
+        Fail(now_ms);  // クロック切替中。少し待って読み直す
+        wait_until_ms_ = now_ms + 1;
+        return false;
+      }
+      Succeed();
+      state_ = State::SET_CLOCK;
+      break;
+    case State::SET_CLOCK:
+      Succeed();
+      wait_until_ms_ = now_ms + config_.clock_settle_ms;
+      state_ = State::TO_FUSION;
+      break;
+    case State::TO_FUSION:
+      Succeed();
+      wait_until_ms_ = now_ms + FUSION_SWITCH_MS;
+      state_ = State::CHECK_STATUS;
+      break;
+    case State::CHECK_STATUS:
+      if (result.data[0] != SYS_STATUS_FUSION) {
+        waiting_ = false;
+        state_ = State::READ_SYS_ERR;  // 理由を読んでからエラーに数える
+        return false;
+      }
+      Succeed();
+      state_ = State::RUNNING;
+      next_read_ms_ = now_ms;
+      read_count_ = 0;
+      break;
+    case State::READ_SYS_ERR:
+      sys_err_ = result.data[0];
+      Fail(now_ms);
+      if (state_ != State::SOFT_RESET) {
+        state_ = State::CHECK_STATUS;
+      }
+      return false;
+    case State::RUNNING:
+      Succeed();
+      if (pending_.reg == REG_CALIB_STAT) {
+        calib_stat_ = result.data[0];
+        return false;
+      }
+      for (int i = 0; i < 3; ++i) {
+        sample.gyro[i] = BNO055::ScaleGyroRad(ReadI16(&result.data[2 * i]));
+        sample.euler[i] = BNO055::ScaleEulerRad(ReadI16(&result.data[6 + 2 * i]));
+      }
+      sample.calib_stat = calib_stat_;
+      return true;
+    case State::BOOT_WAIT:
+    case State::SOFT_RESET:
+      waiting_ = false;
+      break;
+  }
+  return false;
+}
+}  // namespace rabcl
