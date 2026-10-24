@@ -39,6 +39,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 
 add_library(rabcl SHARED
+  src/component/bno055.cpp
   src/component/jga25_370.cpp
   src/component/ld_20mg.cpp
   src/controller/body_attitude.cpp
@@ -96,6 +97,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_can test/test_can.cpp)
   target_link_libraries(test_can rabcl)
+
+  ament_add_gtest(test_bno055 test/test_bno055.cpp)
+  target_link_libraries(test_bno055 rabcl)
 
   ament_add_gtest(test_jga25_370 test/test_jga25_370.cpp)
   target_link_libraries(test_jga25_370 rabcl)
