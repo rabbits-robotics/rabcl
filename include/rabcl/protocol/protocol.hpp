@@ -89,11 +89,12 @@ struct ModeCmd
   uint8_t value;
 };
 
+// ロール・ピッチは視点（カメラ）座標系。ファームが首 Yaw の関節角で車体座標系へ回す
 struct BodyPose
 {
   float height;  // 0〜1（0 = 最低車高）
-  float roll;    // [rad] 正 = 右が下がる（REP-103）
-  float pitch;   // [rad] 正 = 前が下がる
+  float roll;    // [rad] 正 = カメラから見て右が下がる（REP-103）
+  float pitch;   // [rad] 正 = カメラから見て前が下がる
 };
 
 constexpr uint8_t INFO_LEN = 10;

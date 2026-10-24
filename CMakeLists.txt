@@ -7,6 +7,8 @@ if(ESP_PLATFORM)
       src/component/bno055.cpp
       src/component/jga25_370.cpp
       src/component/ld_20mg.cpp
+      src/controller/body_posture.cpp
+      src/controller/leg_damper.cpp
       src/controller/omni_drive.cpp
       src/controller/pd_gravity_ff.cpp
       src/interface/can.cpp
@@ -35,6 +37,8 @@ find_package(ament_cmake REQUIRED)
 add_library(rabcl SHARED
   src/component/jga25_370.cpp
   src/component/ld_20mg.cpp
+  src/controller/body_posture.cpp
+  src/controller/leg_damper.cpp
   src/controller/omni_drive.cpp
   src/controller/pd_gravity_ff.cpp
   src/interface/uart.cpp
@@ -96,6 +100,12 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_protocol test/test_protocol.cpp)
   target_link_libraries(test_protocol rabcl)
+
+  ament_add_gtest(test_body_posture test/test_body_posture.cpp)
+  target_link_libraries(test_body_posture rabcl)
+
+  ament_add_gtest(test_leg_damper test/test_leg_damper.cpp)
+  target_link_libraries(test_leg_damper rabcl)
 endif()
 
 ament_package()
