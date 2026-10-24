@@ -33,6 +33,21 @@ TEST(BodyAttitude, YawWrapsWhenIntegrating)
   EXPECT_NEAR(body.Get().yaw, 4.0f - 2.0f * static_cast<float>(M_PI), 1e-5f);
 }
 
+TEST(BodyAttitude, AnchorImuKeepsYawContinuous)
+{
+  // 積分で yaw 1.0 まで来たところで IMU が使えるようになった: IMU の基準（モード投入時 = 0）は
+  // 胴体の基準と違うので、今の推定に合わせて繋ぎ、以後は IMU の変化分だけ追う
+  BodyAttitude body;
+  body.UpdateFromChassisRate(2.0f, 0.5f);  // yaw 1.0
+  body.AnchorImu({0.3f, 0.0f, 0.0f}, {0.5f, 0.0f, 0.0f});  // IMU − 関節角 = −0.2 を 1.0 に合わせる
+  EXPECT_NEAR(body.Get().yaw, 1.0f, 1e-6f);
+  body.UpdateFromImu({0.4f, 0.0f, 0.0f}, {0.5f, 0.0f, 0.0f});  // IMU が 0.1 進んだ
+  EXPECT_NEAR(body.Get().yaw, 1.1f, 1e-6f);
+  body.UpdateFromImu({0.4f, 0.2f, -0.1f}, {0.5f, 0.0f, 0.0f});  // pitch / roll はそのまま
+  EXPECT_FLOAT_EQ(body.Get().pitch, 0.2f);
+  EXPECT_FLOAT_EQ(body.Get().roll, -0.1f);
+}
+
 TEST(BodyAttitude, ResetZeroes)
 {
   BodyAttitude body;

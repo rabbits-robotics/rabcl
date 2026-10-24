@@ -25,8 +25,11 @@ struct NeckAngles
 class BodyAttitude
 {
 public:
-  // IMU 姿勢と、その計測時刻の首関節角から胴体姿勢を更新する
+  // IMU 姿勢と、その計測時刻の首関節角から胴体姿勢を更新する（yaw は AnchorImu のオフセットを加える）
   void UpdateFromImu(const Attitude & imu, const NeckAngles & joint_at_imu_time);
+  // IMU が使えるようになった（または再初期化された）とき: IMU の yaw 基準（モード投入時 = 0）を
+  // 今の推定に合わせて繋ぐ。呼んだ直後の Get().yaw は変わらず、以後は IMU の変化分だけ追う
+  void AnchorImu(const Attitude & imu, const NeckAngles & joint_at_imu_time);
   // シャシの yaw 速度 wz [rad/s] を dt [s] だけ積分する（yaw のみ）
   void UpdateFromChassisRate(float wz, float dt);
   Attitude Get() const;
@@ -34,6 +37,7 @@ public:
 
 private:
   Attitude body_ = {0.0f, 0.0f, 0.0f};
+  float imu_yaw_offset_ = 0.0f;  // IMU の yaw に足して胴体の基準に合わせる量
 };
 
 }  // namespace rabcl

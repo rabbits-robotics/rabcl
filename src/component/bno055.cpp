@@ -128,6 +128,27 @@ int16_t ReadI16(const uint8_t * p)
 }
 }  // namespace
 
+const char * BNO055Sequencer::StateName(State state)
+{
+  switch (state) {
+    case State::BOOT_WAIT: return "BOOT_WAIT";
+    case State::CHECK_ID: return "CHECK_ID";
+    case State::TO_CONFIG: return "TO_CONFIG";
+    case State::SET_PAGE: return "SET_PAGE";
+    case State::SET_UNITS: return "SET_UNITS";
+    case State::SET_AXIS_MAP: return "SET_AXIS_MAP";
+    case State::SET_AXIS_SIGN: return "SET_AXIS_SIGN";
+    case State::CHECK_CLOCK: return "CHECK_CLOCK";
+    case State::SET_CLOCK: return "SET_CLOCK";
+    case State::TO_FUSION: return "TO_FUSION";
+    case State::CHECK_STATUS: return "CHECK_STATUS";
+    case State::READ_SYS_ERR: return "READ_SYS_ERR";
+    case State::RUNNING: return "RUNNING";
+    case State::SOFT_RESET: return "SOFT_RESET";
+  }
+  return "?";
+}
+
 BNO055Sequencer::BNO055Sequencer(const BNO055Config & config)
 : config_(config)
 {
@@ -250,12 +271,14 @@ bool BNO055Sequencer::Next(uint32_t now_ms, BNO055Op & op)
       IssueRead(REG_SYS_ERR, 1, now_ms);
       break;
     case State::RUNNING:
-      if (static_cast<int32_t>(now_ms - next_read_ms_) < 0) {
-        return false;
+      if (config_.sample_period_ms > 0) {  // 周期を自分で持つ場合（I2C など）。0 なら呼ばれるたびに読む
+        if (static_cast<int32_t>(now_ms - next_read_ms_) < 0) {
+          return false;
+        }
+        // 周期から大きく遅れたら今から数え直す（まとめて連射しない）
+        next_read_ms_ = (now_ms - next_read_ms_ > config_.sample_period_ms) ?
+          now_ms + config_.sample_period_ms : next_read_ms_ + config_.sample_period_ms;
       }
-      // 周期から大きく遅れたら今から数え直す（まとめて連射しない）
-      next_read_ms_ = (now_ms - next_read_ms_ > config_.sample_period_ms) ?
-        now_ms + config_.sample_period_ms : next_read_ms_ + config_.sample_period_ms;
       ++read_count_;
       if (read_count_ % CALIB_EVERY_READS == 0) {
         IssueRead(REG_CALIB_STAT, 1, now_ms);
@@ -338,9 +361,15 @@ bool BNO055Sequencer::Complete(const BNO055Result & result, uint32_t now_ms, BNO
       state_ = State::CHECK_STATUS;
       break;
     case State::CHECK_STATUS:
-      if (result.data[0] != SYS_STATUS_FUSION) {
+      if (result.data[0] == SYS_STATUS_ERROR) {
         waiting_ = false;
         state_ = State::READ_SYS_ERR;  // 理由を読んでからエラーに数える
+        return false;
+      }
+      if (result.data[0] != SYS_STATUS_FUSION) {
+        // 初期化中（2 / 3 など）。エラーには数えず、少し待って読み直す
+        waiting_ = false;
+        wait_until_ms_ = now_ms + STATUS_RETRY_MS;
         return false;
       }
       Succeed();
@@ -353,6 +382,7 @@ bool BNO055Sequencer::Complete(const BNO055Result & result, uint32_t now_ms, BNO
       Fail(now_ms);
       if (state_ != State::SOFT_RESET) {
         state_ = State::CHECK_STATUS;
+        wait_until_ms_ = now_ms + STATUS_RETRY_MS;
       }
       return false;
     case State::RUNNING:

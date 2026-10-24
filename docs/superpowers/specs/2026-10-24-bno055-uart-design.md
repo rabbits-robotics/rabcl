@@ -108,7 +108,8 @@ namespace rabcl {
 struct BNO055Config {
   uint8_t axis_map_config = 0x24; uint8_t axis_map_sign = 0x00; uint8_t operation_mode = 0x08;
   bool use_external_crystal = false;  // モジュールの水晶を確認したら true
-  uint32_t sample_period_ms = 10; uint32_t response_timeout_ms = 20; uint32_t boot_wait_ms = 700;
+  uint32_t sample_period_ms = 10;  // 0 = 周期は呼び出し側が持ち、RUNNING では Next のたびに読む（gamma はこれ。tick と二重管理しない）
+  uint32_t response_timeout_ms = 20; uint32_t boot_wait_ms = 700;
   uint32_t clock_settle_ms = 20; uint8_t max_consecutive_errors = 10;
 };
 struct BNO055Sample { float gyro[3]; float euler[3]; uint8_t calib_stat; };  // gyro [rad/s] x,y,z。euler [rad] heading, roll, pitch（BNO055 の約束のまま）
@@ -126,7 +127,8 @@ struct BNO055Result {  // 操作の結果
 class BNO055Sequencer {
 public:
   enum class State : uint8_t { BOOT_WAIT, CHECK_ID, TO_CONFIG, SET_PAGE, SET_UNITS, SET_AXIS_MAP, SET_AXIS_SIGN,
-    CHECK_CLOCK, SET_CLOCK, TO_FUSION, CHECK_STATUS, RUNNING, SOFT_RESET };  // 終端状態は無い
+    CHECK_CLOCK, SET_CLOCK, TO_FUSION, CHECK_STATUS, READ_SYS_ERR, RUNNING, SOFT_RESET };  // 終端状態は無い
+  static const char * StateName(State);  // ログ用
   explicit BNO055Sequencer(const BNO055Config &);
   // 時刻を進め、出すべき操作があれば op に入れて true。応答待ち中は、timeout を超えていればタイムアウトとして
   // 処理（エラー +1、同じ操作を再発行）し、超えていなければ false。待機（BOOT_WAIT、周期待ち、モード切替待ち）中も false
@@ -143,7 +145,7 @@ public:
 }
 ```
 
-- 状態機械の順: BOOT_WAIT（`boot_wait_ms`。初回は電源投入からの POR 待ち）→ CHECK_ID（READ 0x00,1 → 0xA0）→ TO_CONFIG（WRITE 0x3D=0x00、成功後 19 ms 待ち）→ SET_PAGE（WRITE 0x07=0）→ SET_UNITS（WRITE 0x3B=0x06: ジャイロ rad/s、オイラー rad、Windows）→ SET_AXIS_MAP（WRITE 0x41）→ SET_AXIS_SIGN（WRITE 0x42）→ [`use_external_crystal` のときだけ] CHECK_CLOCK（READ 0x38,1 → bit0 = 0）→ SET_CLOCK（WRITE 0x3F=0x80、`clock_settle_ms` 待ち）→ TO_FUSION（WRITE 0x3D=operation_mode、7 ms 待ち）→ CHECK_STATUS（READ 0x39,1 → 5。1 なら READ 0x3A,1 を `sys_err` に保持してエラー扱い）→ RUNNING（`sample_period_ms` ごとに READ 0x14,12。100 回に 1 回は代わりに READ 0x35,1 → `calib_stat`。その周期のサンプルは落ちる）。
+- 状態機械の順: BOOT_WAIT（`boot_wait_ms`。初回は電源投入からの POR 待ち）→ CHECK_ID（READ 0x00,1 → 0xA0）→ TO_CONFIG（WRITE 0x3D=0x00、成功後 19 ms 待ち）→ SET_PAGE（WRITE 0x07=0）→ SET_UNITS（WRITE 0x3B=0x06: ジャイロ rad/s、オイラー rad、Windows）→ SET_AXIS_MAP（WRITE 0x41）→ SET_AXIS_SIGN（WRITE 0x42）→ [`use_external_crystal` のときだけ] CHECK_CLOCK（READ 0x38,1 → bit0 = 0）→ SET_CLOCK（WRITE 0x3F=0x80、`clock_settle_ms` 待ち）→ TO_FUSION（WRITE 0x3D=operation_mode、7 ms 待ち）→ CHECK_STATUS（READ 0x39,1 → 5。1 = エラーなら READ 0x3A,1 を `sys_err` に保持してエラーに数え、2 / 3 = 初期化中ならエラーに数えず 10 ms 待って読み直す）→ RUNNING（`sample_period_ms` ごとに READ 0x14,12。100 回に 1 回は代わりに READ 0x35,1 → `calib_stat`。その周期のサンプルは落ちる）。
 - エラー: タイムアウト、`error != 0`、期待値違い（CHIP_ID、SYS_STATUS、データ長）はすべて連続エラー +1、成功で 0。`> max_consecutive_errors` で SOFT_RESET: WRITE 0x3F=0x20（`expect_response = false`）→ BOOT_WAIT（`boot_wait_ms`）→ CHECK_ID から。`reinit_count` +1、`running()` false。終端状態は無く、何度でも繰り返す。`0x07`（BUS_OVER_RUN）も同じ扱いで、しきい値に達しない限り再初期化しない。
 - 換算: `BNO055::ScaleGyroRad(int16)` / `ScaleEulerRad(int16)`（1/900）を足し、`Complete` がデータ読みの 12 B を `BNO055Sample` に直す。既存の `UpdateGyro` 等（°単位の定数）は残す。
 
@@ -178,7 +180,7 @@ public:
 }
 ```
 
-- UART のタイムアウト後に遅れて届いた応答は、`Feed` が「待ち中でなければ捨てる」「待ち中なら形と長さで検証する」ことで誤受理しない（再送した要求の応答と同じ形なら受けるが、それは正しい応答として扱ってよい）。
+- UART のタイムアウト後に遅れて届いた応答は、`Feed` が「待ち中でなければ捨てる」「待ち中なら形と長さで検証する」ことで誤受理しない（再送した要求の応答と同じ形なら受けるが、それは正しい応答として扱ってよい）。**ただしこれはドライバに渡したバイトにしか効かない**: UART の受信バッファに残った古い応答は次の要求の応答として読まれ、以後ずっと 1 周期前の値を返し続ける（エラーにならない）。呼び出し側（ファーム）は **要求を送る直前に受信バッファを空にする**。
 - I2C 側は同期なので `BNO055Result.error` にバスの失敗を入れるだけ。タイムアウトは起きない（バスの実装が自分で持つ）。
 
 ### 4.4 テスト（gtest、`test/test_bno055.cpp`）
@@ -250,6 +252,8 @@ public:
 - `ImuTask` は「要求 → 応答の長さだけブロック読み → 10 ms 境界で次」の FreeRTOS タスク。tick（100 Hz）は変えない。
 - 状態機械（`BNO055Sequencer`）をバスから切り離し、UART と I2C の薄い層を別に持つ（ユーザーの提案 2026-10-24: I2C ドライバも作る）。I2C は rabcl の抽象バス `BNO055RegisterBus` までで、ESP32 の実バスは I2C の基板が出たときに rabcl_esp32 へ。名前は既存の `BNO055` に合わせて `BNO055…`。
 - `ImuState` に `neck_yaw` を足す。
+- IMU の yaw 基準（モード投入時 = 0）と胴体の基準（起動時の向き）は違うので、`Controller::Tick` は IMU 経路に入る瞬間（有効化、再初期化、安定化の入）に `BodyAttitude::AnchorImu` で今の推定に繋ぐ（レビュー指摘。切り替えで砲塔が跳ばない）。
+- 応答待ちの `SerialPort::Read` のタイムアウトは `pdMS_TO_TICKS(20) + 1`（tick の丸めで短くならないように）。
 - IMU が RUNNING から落ちたら `Comm::ClearImu()`（新規。`imu_present_ = false`）で IMU フレームの送信を止め、古い値が PC に流れ続けないようにする。
 - 24 V 断で P4 が USB 給電で生き続ける場合、BNO055 は P4 の 3.3 V 給電なので IMU も生き続ける（この設計に追加は不要）。首 Yaw のフィードバックが止まる間の扱いは制御側（モータ電源断の対応: フィードバック途絶で指令停止、復帰で再イネーブル）で決めた。
 - 換算定数（900 LSB/rad）は実機で裏取りするまで仮。

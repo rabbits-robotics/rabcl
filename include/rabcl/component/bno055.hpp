@@ -111,7 +111,7 @@ struct BNO055Config
   uint8_t axis_map_sign = 0x00;      // AXIS_MAP_SIGN
   uint8_t operation_mode = 0x08;     // OPR_MODE（既定 IMU: 加速度 + ジャイロ、磁気なし）
   bool use_external_crystal = false;  // SYS_TRIGGER の CLK_SEL。モジュールの水晶を確認したら true
-  uint32_t sample_period_ms = 10;    // RUNNING の読み周期（融合出力は 100 Hz）
+  uint32_t sample_period_ms = 10;    // RUNNING の読み周期（融合出力は 100 Hz）。0 = 周期は呼び出し側が持ち、Next のたびに読む
   uint32_t response_timeout_ms = 20;  // 応答待ち
   uint32_t boot_wait_ms = 700;       // 電源投入 / ソフトリセットから最初の要求まで（POR 400 / RST 650 を覆う）
   uint32_t clock_settle_ms = 20;     // CLK_SEL を書いたあとの待ち
@@ -194,6 +194,10 @@ public:
   static constexpr uint32_t CONFIG_SWITCH_MS = 19;     // 動作モード → CONFIG
   static constexpr uint32_t FUSION_SWITCH_MS = 7;      // CONFIG → 動作モード
   static constexpr uint32_t CALIB_EVERY_READS = 100;   // 100 回に 1 回 CALIB_STAT を読む
+  static constexpr uint32_t STATUS_RETRY_MS = 10;      // SYS_STATUS が 5 でないときの読み直し間隔
+  static constexpr uint8_t SYS_STATUS_ERROR = 1;
+
+  static const char * StateName(State state);
 
   explicit BNO055Sequencer(const BNO055Config & config);
 

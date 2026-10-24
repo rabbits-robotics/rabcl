@@ -403,7 +403,7 @@ TEST_F(BNO055SequencerTest, SysStatusErrorReadsSysErr)
   sys_status_ = 1;
   sys_err_ = 3;
   BNO055Sequencer seq(DefaultConfig());
-  Run(seq, 0, 800);
+  Run(seq, 0, 1000);  // 読み直しは 10 ms 間隔 → 11 回で約 120 ms
   EXPECT_FALSE(seq.running());
   EXPECT_EQ(seq.sys_err(), 3);
   EXPECT_GE(CountRead(0x3A), 1);
@@ -434,6 +434,44 @@ TEST_F(BNO055SequencerTest, HeadingWrapsToSignedYaw)
   EXPECT_LT(yaw, static_cast<float>(M_PI));
   EXPECT_NEAR(yaw, 0.0f, 1e-3f);
   EXPECT_FLOAT_EQ(BNO055::ScaleGyroRad(900), 1.0f);
+}
+
+TEST_F(BNO055SequencerTest, ZeroPeriodReadsOnEveryNext)
+{
+  // sample_period_ms = 0: 周期は呼び出し側（ファームの tick）が持ち、RUNNING では Next のたびに読む
+  BNO055Config c = DefaultConfig();
+  c.sample_period_ms = 0;
+  BNO055Sequencer seq(c);
+  Run(seq, 0, 800);
+  ASSERT_TRUE(seq.running());
+  ops_.clear();
+  Run(seq, 801, 850);  // 50 回呼ぶ → 50 回読む
+  EXPECT_EQ(CountRead(0x14) + CountRead(0x35), 50);
+}
+
+TEST_F(BNO055SequencerTest, SysStatusInitializingWaitsWithoutError)
+{
+  // SYS_STATUS が 2 / 3（初期化中）なら、エラーに数えず 10 ms 待って読み直す
+  sys_status_ = 3;
+  BNO055Sequencer seq(DefaultConfig());
+  Run(seq, 0, 760);
+  EXPECT_EQ(seq.error_count(), 0u);
+  EXPECT_EQ(seq.reinit_count(), 0u);
+  EXPECT_EQ(CountRead(0x3A), 0);
+  const int reads_before = CountRead(0x39);
+  EXPECT_GE(reads_before, 2);
+  EXPECT_LE(reads_before, 5);  // 約 10 ms ごと（731 〜 760 ms）
+  sys_status_ = 5;
+  Run(seq, 761, 800);
+  EXPECT_TRUE(seq.running());
+}
+
+TEST(BNO055SequencerState, StateNames)
+{
+  EXPECT_STREQ(BNO055Sequencer::StateName(BNO055Sequencer::State::BOOT_WAIT), "BOOT_WAIT");
+  EXPECT_STREQ(BNO055Sequencer::StateName(BNO055Sequencer::State::RUNNING), "RUNNING");
+  EXPECT_STREQ(BNO055Sequencer::StateName(BNO055Sequencer::State::READ_SYS_ERR), "READ_SYS_ERR");
+  EXPECT_STREQ(BNO055Sequencer::StateName(BNO055Sequencer::State::SOFT_RESET), "SOFT_RESET");
 }
 
 // --- 既存の換算（°単位の既定） ---
