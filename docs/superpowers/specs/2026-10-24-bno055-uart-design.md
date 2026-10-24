@@ -71,102 +71,135 @@ UART プロトコル（PS1 = High。115200 8N1）:
 
 ## 4. rabcl（機体に依らない部分）
 
-`include/rabcl/component/bno055.hpp` を UART 対応に拡張する（既存の換算は残す）。3 つの部品に分ける。
+`include/rabcl/component/bno055.hpp` を拡張する。既存の `BNO055`（レジスタ番地と換算。バスに依らない。`I2C_ADDR` は I2C で使うときのアドレスとコメントする）は残す。新しい部品は名前を既存に合わせて `BNO055…` とし、**バスに依らない状態機械**と **バスごとの薄い層**に分ける。
 
-### 4.1 `Bno055Uart` — プロトコルの組み立てと解釈（純粋関数 + 受信パーサ）
+```
+BNO055Sequencer（起動シーケンス・周期読み・エラー / 再初期化。「次の操作」を出し「結果」を受ける）
+   ├── BNO055UartDriver = BNO055Uart（フレームの組み立て / 解釈）+ Sequencer   ← gamma（UART）
+   └── BNO055I2cDriver  = BNO055RegisterBus（抽象。レジスタ読み書きの口）+ Sequencer   ← 将来の I2C 基板（ESP32 の実バスは rabcl_esp32 に後で）
+```
+
+### 4.1 `BNO055Uart` — UART フレームの組み立てと受信パーサ
 
 ```cpp
 namespace rabcl {
-class Bno055Uart {
+class BNO055Uart {
 public:
-  static constexpr uint8_t START = 0xAA;
-  static constexpr uint8_t RESPONSE = 0xBB;
-  static constexpr uint8_t ACK = 0xEE;
+  static constexpr uint8_t START = 0xAA, RESPONSE = 0xBB, ACK = 0xEE;
   static constexpr size_t MAX_READ = 128;
   enum class Status : uint8_t { WRITE_SUCCESS = 0x01, READ_FAIL = 0x02, WRITE_FAIL = 0x03, REGMAP_INVALID_ADDRESS = 0x04,
     REGMAP_WRITE_DISABLED = 0x05, WRONG_START_BYTE = 0x06, BUS_OVER_RUN_ERROR = 0x07, MAX_LENGTH_ERROR = 0x08,
     MIN_LENGTH_ERROR = 0x09, RECEIVE_CHARACTER_TIMEOUT = 0x0A };
-
-  // 要求の組み立て。書いたバイト数を返す（out は 4 + len 以上）
-  static size_t BuildRead(uint8_t reg, uint8_t len, uint8_t * out);
-  static size_t BuildWrite(uint8_t reg, const uint8_t * data, uint8_t len, uint8_t * out);
-
-  // 受信パーサ。1 バイトずつ入れ、応答が揃ったら true を返して結果を out に置く
   struct Response { bool is_data; uint8_t len; uint8_t data[MAX_READ]; Status status; };
+  static size_t BuildRead(uint8_t reg, uint8_t len, uint8_t * out);                        // AA 01 reg len → 4
+  static size_t BuildWrite(uint8_t reg, const uint8_t * data, uint8_t len, uint8_t * out);  // AA 00 reg len data → 4 + len
   bool Push(uint8_t byte, Response & out);  // 揃った瞬間だけ true
-  void Reset();                              // 要求を捨てたとき（タイムアウト）に状態を戻す
+  void Reset();
 };
 }
 ```
 
-- `Push` は `0xBB len data...` と `0xEE status` の 2 形だけを受ける。先頭が 0xBB / 0xEE 以外のバイトは捨てる（同期ずれからの回復）。`len` が 0 または `MAX_READ` 超は捨てて先頭探しに戻る。
+- `Push` は `BB len data…` と `EE status` の 2 形だけを受ける。先頭が `BB` / `EE` 以外のバイトは捨てる（同期ずれからの回復）。`len` が 0 または `MAX_READ` 超は捨てて先頭探しに戻る。
 
-### 4.2 `Bno055Driver` — 起動シーケンスと周期読みの状態機械（UART も時計も知らない）
+### 4.2 `BNO055Sequencer` — 起動シーケンスと周期読みの状態機械（バスも時計も知らない）
 
 ```cpp
 namespace rabcl {
-struct Bno055Config {
-  uint8_t axis_map_config;  // AXIS_MAP_CONFIG（既定 0x24）
-  uint8_t axis_map_sign;    // AXIS_MAP_SIGN（既定 0x00）
-  uint8_t operation_mode;   // OPR_MODE（既定 IMU 0x08）
-  bool use_external_crystal;  // SYS_TRIGGER の CLK_SEL（既定 false。モジュールの水晶を確認したら true）
-  uint32_t sample_period_ms;     // RUNNING の読み周期（既定 10）
-  uint32_t response_timeout_ms;  // 既定 20
-  uint32_t boot_wait_ms;         // 電源投入 / ソフトリセットから最初の要求までの待ち（既定 700。POR 400 / RST 650 を覆う）
-  uint32_t clock_settle_ms;      // CLK_SEL を書いたあとの待ち（既定 20）
-  uint8_t max_consecutive_errors;  // これを超えたら再初期化（既定 10 ≈ 100 ms）
+struct BNO055Config {
+  uint8_t axis_map_config = 0x24; uint8_t axis_map_sign = 0x00; uint8_t operation_mode = 0x08;
+  bool use_external_crystal = false;  // モジュールの水晶を確認したら true
+  uint32_t sample_period_ms = 10; uint32_t response_timeout_ms = 20; uint32_t boot_wait_ms = 700;
+  uint32_t clock_settle_ms = 20; uint8_t max_consecutive_errors = 10;
+};
+struct BNO055Sample { float gyro[3]; float euler[3]; uint8_t calib_stat; };  // gyro [rad/s] x,y,z。euler [rad] heading, roll, pitch（BNO055 の約束のまま）
+
+struct BNO055Op {   // 状態機械が出す操作
+  enum class Kind : uint8_t { READ, WRITE };
+  Kind kind; uint8_t reg; uint8_t len; uint8_t data[8];
+  bool expect_response;  // false = 応答を待たない（ソフトリセットだけ）
+};
+struct BNO055Result {  // 操作の結果
+  bool ok; uint8_t len; uint8_t data[BNO055Uart::MAX_READ];
+  uint8_t error;         // 0 = なし。UART では EE の status、I2C ではバスの失敗コード。TIMEOUT = 0xFF
 };
 
-struct Bno055Sample {
-  float gyro[3];   // [rad/s] x, y, z（入れ替え後 = カメラ座標系）
-  float euler[3];  // [rad] heading, roll, pitch（BNO055 の約束のまま。REP-103 への変換は機体側）
-  uint8_t calib_stat;
-};
-
-class Bno055Driver {
+class BNO055Sequencer {
 public:
   enum class State : uint8_t { BOOT_WAIT, CHECK_ID, TO_CONFIG, SET_PAGE, SET_UNITS, SET_AXIS_MAP, SET_AXIS_SIGN,
-    CHECK_CLOCK, SET_CLOCK, TO_FUSION, CHECK_STATUS, RUNNING, SOFT_RESET };  // 終端状態は無い（必ず BOOT_WAIT に戻る）
-
-  explicit Bno055Driver(const Bno055Config &);
-  // 時刻を進める。送るべきバイト列があれば out に書いて長さを返す（0 なら送るものなし）
-  size_t Tick(uint32_t now_ms, uint8_t * out, size_t cap);
-  // 受信したバイト列を入れる。サンプルが揃ったら true（sample に入る）
-  bool Feed(const uint8_t * data, size_t len, uint32_t now_ms, Bno055Sample & sample);
-  State state() const;
-  bool running() const;          // RUNNING（valid の根拠）
-  uint32_t error_count() const;  // 連続エラー数
-  uint32_t reinit_count() const; // 再初期化した回数（ログ用）
-  void Restart(uint32_t now_ms); // SOFT_RESET（RST_SYS を書いて boot_wait_ms 待つ）からやり直す
+    CHECK_CLOCK, SET_CLOCK, TO_FUSION, CHECK_STATUS, RUNNING, SOFT_RESET };  // 終端状態は無い
+  explicit BNO055Sequencer(const BNO055Config &);
+  // 時刻を進め、出すべき操作があれば op に入れて true。応答待ち中は、timeout を超えていればタイムアウトとして
+  // 処理（エラー +1、同じ操作を再発行）し、超えていなければ false。待機（BOOT_WAIT、周期待ち、モード切替待ち）中も false
+  bool Next(uint32_t now_ms, BNO055Op & op);
+  // 直前の操作の結果。データ読みで揃ったサンプルなら sample に入れて true
+  bool Complete(const BNO055Result & result, uint32_t now_ms, BNO055Sample & sample);
+  bool waiting() const;            // 応答待ち中
+  const BNO055Op & pending() const;  // 待っている操作（UART 層が応答の長さを知るため）
+  uint32_t last_op_ms() const;     // 最後に操作を出した時刻（ファームが time_us に使う）
+  State state() const; bool running() const;
+  uint32_t error_count() const; uint32_t reinit_count() const; uint8_t calib_stat() const; uint8_t sys_err() const;
+  void Restart(uint32_t now_ms);   // SOFT_RESET へ
 };
 }
 ```
 
-- `Tick` は「応答待ちでなければ次の要求を出す」。RUNNING では `sample_period_ms`（既定 10）ごとに `BuildRead(0x14, 12)`（ジャイロ 6 B + オイラー 6 B を 1 回で）。CALIB_STAT は 1 秒に 1 回だけ別に読む（RUNNING の 100 回に 1 回、データ読みの代わりに `BuildRead(0x35, 1)`。その周期のサンプルは落ちるが 1 % なので許容。私の判断）。
-- 起動シーケンス: BOOT_WAIT（`boot_wait_ms`。初回は電源投入からの POR 待ち）→ CHECK_ID（0x00 を読んで 0xA0）→ TO_CONFIG（OPR_MODE = 0、19 ms 待ち）→ SET_PAGE（PAGE_ID = 0）→ SET_UNITS（UNIT_SEL = 0b0000_0110: ジャイロ rad/s、オイラー rad、Windows）→ SET_AXIS_MAP → SET_AXIS_SIGN → CHECK_CLOCK（SYS_CLK_STATUS bit0 = 0 を確認。`use_external_crystal` が false なら SET_CLOCK ごと飛ばす）→ SET_CLOCK（SYS_TRIGGER = 0x80、`clock_settle_ms` 待ち）→ TO_FUSION（OPR_MODE = config の値、7 ms 待ち）→ CHECK_STATUS（SYS_STATUS = 5 を確認。1 なら SYS_ERR を読んでログ用に保持し、エラー扱い）→ RUNNING。各段は 1 要求 1 応答で、応答が WRITE_SUCCESS / 期待値でなければ同じ段を再試行。
-- 連続エラー（タイムアウト、`0xEE` のエラー status、期待値違い）を数え、成功 1 回で 0 に戻す。`max_consecutive_errors` を超えたら **SOFT_RESET**: SYS_TRIGGER に 0x20（RST_SYS）を書く（UART では ACK が返らないので待たない）→ BOOT_WAIT（`boot_wait_ms`）→ CHECK_ID から。`reinit_count` を数え、`running()` は false。終端状態は無く、何度でも繰り返す。
-- 応答待ちが `response_timeout_ms` を超えたら要求を捨てて（`Bno055Uart::Reset`）エラーを 1 つ数え、次の `Tick` で再送。`0xEE 0x07`（BUS_OVER_RUN。融合がレジスタを更新中に読んだとき返る。正常動作中にも数回続くことがある）は同じ扱いで、しきい値 10（≈ 100 ms）に達しない限り再初期化しない。
-- `Feed` でデータ応答が揃ったら換算して `sample` に入れる。換算は既存の `UpdateGyro` / `UpdateEuler` の定数を rad 設定用（1/900）に合わせた `Bno055::ScaleGyroRad` / `ScaleEulerRad` を足す（定数は 1 か所にまとめ、実機で裏取りして直せるようにする）。
-- RUNNING で `0xEE 0x07` が返ったら、そのサンプルを捨てて次の周期へ（上のとおり連続エラーに数える）。
-- `Tick` は要求を送った時刻を `last_request_ms()` で返す（ファームが `time_us` に使う）。
+- 状態機械の順: BOOT_WAIT（`boot_wait_ms`。初回は電源投入からの POR 待ち）→ CHECK_ID（READ 0x00,1 → 0xA0）→ TO_CONFIG（WRITE 0x3D=0x00、成功後 19 ms 待ち）→ SET_PAGE（WRITE 0x07=0）→ SET_UNITS（WRITE 0x3B=0x06: ジャイロ rad/s、オイラー rad、Windows）→ SET_AXIS_MAP（WRITE 0x41）→ SET_AXIS_SIGN（WRITE 0x42）→ [`use_external_crystal` のときだけ] CHECK_CLOCK（READ 0x38,1 → bit0 = 0）→ SET_CLOCK（WRITE 0x3F=0x80、`clock_settle_ms` 待ち）→ TO_FUSION（WRITE 0x3D=operation_mode、7 ms 待ち）→ CHECK_STATUS（READ 0x39,1 → 5。1 なら READ 0x3A,1 を `sys_err` に保持してエラー扱い）→ RUNNING（`sample_period_ms` ごとに READ 0x14,12。100 回に 1 回は代わりに READ 0x35,1 → `calib_stat`。その周期のサンプルは落ちる）。
+- エラー: タイムアウト、`error != 0`、期待値違い（CHIP_ID、SYS_STATUS、データ長）はすべて連続エラー +1、成功で 0。`> max_consecutive_errors` で SOFT_RESET: WRITE 0x3F=0x20（`expect_response = false`）→ BOOT_WAIT（`boot_wait_ms`）→ CHECK_ID から。`reinit_count` +1、`running()` false。終端状態は無く、何度でも繰り返す。`0x07`（BUS_OVER_RUN）も同じ扱いで、しきい値に達しない限り再初期化しない。
+- 換算: `BNO055::ScaleGyroRad(int16)` / `ScaleEulerRad(int16)`（1/900）を足し、`Complete` がデータ読みの 12 B を `BNO055Sample` に直す。既存の `UpdateGyro` 等（°単位の定数）は残す。
 
-### 4.3 テスト（gtest、`test/test_bno055.cpp`）
+### 4.3 バスごとの薄い層
 
-- `Bno055Uart`: `BuildRead(0x14, 12)` が `AA 01 14 0C`、`BuildWrite(0x3D, {0x08})` が `AA 00 3D 01 08`、`Push` で `BB 0C ...12 B` → data 応答、`EE 01` → WRITE_SUCCESS、先頭ゴミ `12 34 BB 01 A0` → data A0、`BB 00` と `BB 81`（129）は捨てて次を待つ、分割入力（1 バイトずつ）で揃う。
-- `Bno055Driver`（テスト側に「台本どおりに答える偽 BNO055」を書く: 受けた要求に対し、CHIP_ID なら `BB 01 A0`、書きなら `EE 01`、データ読みなら所定の 12 B）: 起動シーケンスの要求が順に出る（送ったバイト列を記録して比較）、全部成功すると `running()`、RUNNING で 10 ms ごとに読み要求、データ応答で `Feed` が true になり換算値が期待どおり（例: ジャイロ z = 900 → 1.0 rad/s、heading = 2827 → π）、応答が 20 ms 来なければ再送してエラー 1、成功で 0 に戻る、連続エラー 10 回で SOFT_RESET（`AA 00 3F 01 20` が出て ACK を待たず BOOT_WAIT）→ `reinit_count` 1 → 700 ms 後に CHECK_ID から再開、`0xEE 0x07` でサンプルを捨てて次の周期に再送（再初期化はしない）、CHIP_ID が違えば同じ段を再試行して連続エラーに数える、`use_external_crystal` false なら CHECK_CLOCK / SET_CLOCK が出ない、SYS_STATUS が 1 なら SYS_ERR を読んでエラー扱い、100 回に 1 回 CALIB_STAT を読み `sample.calib_stat` に入る。
-- 既存の `UpdateAccel` / `UpdateGyro` / `UpdateEuler`（I2C 時代の °/s・° の定数）にもテストを足す（今まで無かった）。
+```cpp
+namespace rabcl {
+class BNO055UartDriver {   // gamma で使う
+public:
+  explicit BNO055UartDriver(const BNO055Config &);
+  size_t Tick(uint32_t now_ms, uint8_t * out, size_t cap);   // Sequencer::Next → BNO055Uart::Build* で out に（expect_response = false の操作は送って即 Complete(ok)）
+  bool Feed(const uint8_t * data, size_t len, uint32_t now_ms, BNO055Sample & sample);  // 応答待ち中のバイトだけ Push → 揃ったら Complete。待ちでないバイトは捨てる
+  size_t expected_response_len() const;  // 応答待ち中: READ なら 2 + len、WRITE なら 2。待ちでなければ 0
+  uint32_t last_request_ms() const;      // = Sequencer::last_op_ms
+  const BNO055Sequencer & sequencer() const;  // state / running / error_count / reinit_count / calib_stat / sys_err
+  void Restart(uint32_t now_ms);
+};
+
+class BNO055RegisterBus {  // I2C など「レジスタをその場で読み書きできる」バスの口。実装は rabcl_esp32 などに
+public:
+  virtual ~BNO055RegisterBus() = default;
+  virtual bool Read(uint8_t reg, uint8_t * data, uint8_t len) = 0;
+  virtual bool Write(uint8_t reg, const uint8_t * data, uint8_t len) = 0;
+};
+class BNO055I2cDriver {   // 将来の I2C 基板用。今回は rabcl 側（抽象バスでのテスト）まで
+public:
+  BNO055I2cDriver(const BNO055Config &, BNO055RegisterBus & bus);
+  bool Tick(uint32_t now_ms, BNO055Sample & sample);  // Sequencer::Next → bus.Read / Write（同期）→ Complete。サンプルなら true
+  const BNO055Sequencer & sequencer() const;
+  void Restart(uint32_t now_ms);
+};
+}
+```
+
+- UART のタイムアウト後に遅れて届いた応答は、`Feed` が「待ち中でなければ捨てる」「待ち中なら形と長さで検証する」ことで誤受理しない（再送した要求の応答と同じ形なら受けるが、それは正しい応答として扱ってよい）。
+- I2C 側は同期なので `BNO055Result.error` にバスの失敗を入れるだけ。タイムアウトは起きない（バスの実装が自分で持つ）。
+
+### 4.4 テスト（gtest、`test/test_bno055.cpp`）
+
+- `BNO055Uart`: `BuildRead(0x14, 12)` → `AA 01 14 0C`、`BuildWrite(0x3D, {0x08})` → `AA 00 3D 01 08`、`Push` で `BB 0C …12 B` → data、`EE 01` → WRITE_SUCCESS、先頭ゴミ `12 34 BB 01 A0` → A0、`BB 00` / `BB 81` は捨てて次を待つ、1 バイトずつで揃う、`Reset` で途中のフレームを捨てる。
+- `BNO055Sequencer`（テストは `Next` / `Complete` を直接呼ぶ。応答は手で作る）: 起動の操作列が順に出る、全部成功で `running()`、RUNNING で 10 ms ごとに READ 0x14,12、100 回に 1 回 0x35、サンプルの換算（ジャイロ z 900 → 1.0 rad/s、heading 2827 → π）、タイムアウトで同じ操作を再発行しエラー +1、成功で 0、連続 11 回で SOFT_RESET（WRITE 0x3F 0x20、`expect_response` false）→ `reinit_count` 1 → `boot_wait_ms` 後に CHECK_ID、`0x07` を 5 回でも再初期化しない、CHIP_ID が違い続けても固まらず running false、SYS_STATUS 1 → SYS_ERR を読んでエラー、`use_external_crystal` false で CHECK_CLOCK / SET_CLOCK が出ない、`Utils::WrapPi(-heading)` が 2π 付近で連続。
+- `BNO055UartDriver`（台本どおり返す偽 BNO055 を UART のバイト列で）: 起動列のバイト列、`expected_response_len`（データ読み 14、書き 2、待ちでない 0）、分割到着、タイムアウト後の遅れ応答を捨てる、BOOT_WAIT 中のゴミを無視、ソフトリセットは送って待たない。
+- `BNO055I2cDriver`（`BNO055RegisterBus` の偽実装: レジスタ配列を持ち、Read / Write を記録）: 起動列が bus に Write / Read として届く、RUNNING でサンプルが取れる、bus が false を返すとエラーに数え、しきい値で SOFT_RESET（Write 0x3F 0x20 が届く）。
+- 既存の `UpdateAccel` / `UpdateGyro` / `UpdateEuler`（°単位の定数）にもテストを足す。
 
 ## 5. gamma ファーム
 
 ### 5.1 `src/imu_task.hpp / .cpp` — `ImuTask`
 
-- `rabcl_esp32::SerialPort`（`board::IMU_UART_PORT = UART_NUM_3`、`IMU_UART_TX_PIN = GPIO_NUM_12`、`IMU_UART_RX_PIN = GPIO_NUM_15`、115200）を開き、FreeRTOS タスク（優先度 5、スタック 4096）で回す。FreeRTOS の tick は 100 Hz（10 ms）のままなので 1 ms 周期のタスクは作れない。代わりに **応答の到着で起きる**形にする: `Bno055Driver::Tick` が要求を出したら、ドライバが知っている応答の長さ（`expected_response_len()`。データ読みなら 14 B、書きなら 2 B、CHIP_ID 読みなら 3 B）を `SerialPort::Read(buf, expected, 2 tick)` でブロック読みする（UART ドライバはその長さが揃った時点で返るので、応答は約 2 ms で手に入る）。揃わなければタイムアウト（2 tick = 20 ms）として読めた分だけ `Feed` に渡し、ドライバが `response_timeout_ms` でエラーを数える。RUNNING では次の要求まで `vTaskDelayUntil` で 10 ms 境界に合わせる（`sample_period_ms`）。起動シーケンスの待ち（7 / 19 / 650 ms）は `vTaskDelay` で tick 単位に丸める（10 ms 刻み。遅くなる方向なので安全）。
+- `rabcl_esp32::SerialPort`（`board::IMU_UART_PORT = UART_NUM_3`、`IMU_UART_TX_PIN = GPIO_NUM_12`、`IMU_UART_RX_PIN = GPIO_NUM_15`、115200）を開き、FreeRTOS タスク（優先度 5、スタック 4096）で回す。FreeRTOS の tick は 100 Hz（10 ms）のままなので 1 ms 周期のタスクは作れない。代わりに **応答の到着で起きる**形にする: `BNO055UartDriver::Tick` が要求を出したら、ドライバが知っている応答の長さ（`expected_response_len()`。データ読みなら 14 B、書きなら 2 B、CHIP_ID 読みなら 3 B）を `SerialPort::Read(buf, expected, 2 tick)` でブロック読みする（UART ドライバはその長さが揃った時点で返るので、応答は約 2 ms で手に入る）。揃わなければタイムアウト（2 tick = 20 ms）として読めた分だけ `Feed` に渡し、ドライバが `response_timeout_ms` でエラーを数える。RUNNING では次の要求まで `vTaskDelayUntil` で 10 ms 境界に合わせる（`sample_period_ms`）。起動シーケンスの待ち（7 / 19 / 650 ms）は `vTaskDelay` で tick 単位に丸める（10 ms 刻み。遅くなる方向なので安全）。
 - サンプルが揃ったら `ImuState` を作って `ImuStore::Set`:
   - `attitude.yaw = WrapPi(-euler.heading)`（時計回り正 → 左回り正）、`attitude.pitch = IMU_PITCH_SIGN * euler.pitch`、`attitude.roll = IMU_ROLL_SIGN * euler.roll`（符号定数は `robot.hpp`、実機で確定。既定 +1 / +1）。
   - `gyro[3]` はそのまま（入れ替え後 = カメラ座標系。符号は yaw 軸だけ heading と逆にならないよう注意: ジャイロ z は右手系で左回り正なので **そのまま**）。
-  - `time_us` = 読み要求を送った時刻（`Bno055Driver::last_request_ms()` を µs に。応答の 1.6 ms 前）。
+  - `time_us` = 読み要求を送った時刻（`BNO055UartDriver::last_request_ms()` を µs に。応答の 1.6 ms 前）。
   - `neck_yaw` = その時刻の首 Yaw の関節角（`Controller` から読む口を足す。制御設計書 4.3「その時刻の関節角」に合わせる。レビューで後回しにしていた Minor の解消）。
-  - `valid = driver.running()`。RUNNING から落ちたら `valid = false` の `ImuState` を 1 回書く。
+  - `valid = driver.sequencer().running()`。RUNNING から落ちたら `valid = false` の `ImuState` を 1 回書く。
 - 1 秒ごとに INFO ログ（state、サンプル数、エラー数、再初期化回数、calib_stat、yaw / pitch / roll）。
 - `Comm::SetImu` にも 100 Hz で渡す（`protocol::Imu`: acc は 0、gyro、euler は REP-103 に直したもの）。bridge の `imu/data` が `imu_link` で出る。RUNNING から落ちたら `Comm::ClearImu()` で送信を止める。
 
@@ -214,7 +247,8 @@ public:
 - 外部水晶（CLK_SEL）は既定 off。AE-BNO055-BO の回路図で 32 kHz 水晶を確認したら on にする（帰宅後の TODO）。CHECK_STATUS で SYS_STATUS = 5 を確認してから RUNNING。
 - `imu_link` は `camera_link` と同じ向き（回転なし）。
 - 軸の入れ替えは BNO055 のレジスタで行い、ファームは符号の約束だけ直す。
-- `ImuTask` は「要求 → 応答の長さだけブロック読み → 10 ms 境界で次」の FreeRTOS タスク。tick（100 Hz）は変えない。`Bno055Driver` に `expected_response_len()` を足す。
+- `ImuTask` は「要求 → 応答の長さだけブロック読み → 10 ms 境界で次」の FreeRTOS タスク。tick（100 Hz）は変えない。
+- 状態機械（`BNO055Sequencer`）をバスから切り離し、UART と I2C の薄い層を別に持つ（ユーザーの提案 2026-10-24: I2C ドライバも作る）。I2C は rabcl の抽象バス `BNO055RegisterBus` までで、ESP32 の実バスは I2C の基板が出たときに rabcl_esp32 へ。名前は既存の `BNO055` に合わせて `BNO055…`。
 - `ImuState` に `neck_yaw` を足す。
 - IMU が RUNNING から落ちたら `Comm::ClearImu()`（新規。`imu_present_ = false`）で IMU フレームの送信を止め、古い値が PC に流れ続けないようにする。
 - 24 V 断で P4 が USB 給電で生き続ける場合、BNO055 は P4 の 3.3 V 給電なので IMU も生き続ける（この設計に追加は不要）。首 Yaw のフィードバックが止まる間の扱いは制御側（モータ電源断の対応: フィードバック途絶で指令停止、復帰で再イネーブル）で決めた。
@@ -227,9 +261,10 @@ public:
 - IMU の向きは本番 = 部品面が後ろ・USB-C が左、試験中 = 部品面が上・USB-C が右（帰宅後に実物で確認）。軸の入れ替えは設定で変えられるように。
 - URDF に `imu_link` を生やす。
 - 実装は C++、rabcl 部分はユニットテスト必須。
+- I2C ドライバも作る（状態機械を共通にし、バスごとの層を分ける）。
 
 ## 10. 実装者に任せること
 
-- `Bno055Driver` の内部状態の持ち方（待ち時間の数え方、再送の実装）。
+- `BNO055Sequencer` の内部状態の持ち方（待ち時間の数え方、再発行の実装）。
 - ログの文言、`ImuTask` のスタックサイズの最終値。
-- テストの偽 BNO055 の作り（台本の持ち方）。
+- テストの偽 BNO055 の作り（UART のバイト列版と、`BNO055RegisterBus` のレジスタ配列版）。
