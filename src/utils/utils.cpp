@@ -48,6 +48,12 @@ double Utils::ShortestPathMultiTurn(double current, double target, double full_r
 }
 static uint32_t xorshift_state_ = 1;
 
+float Utils::WrapPi(float angle)
+{
+  const float two_pi = 2.0f * static_cast<float>(M_PI);
+  return angle - two_pi * std::floor((angle + static_cast<float>(M_PI)) / two_pi);
+}
+
 void Utils::SetRandomSeed(uint32_t seed)
 {
   xorshift_state_ = (seed == 0) ? 1 : seed;

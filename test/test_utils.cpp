@@ -91,6 +91,16 @@ TEST(UtilsTest, ShortestPathCustomFullRotation)
   EXPECT_NEAR(result, 37000.0, 1e-9);
 }
 
+TEST(UtilsTest, WrapPi)
+{
+  const float pi = static_cast<float>(M_PI);
+  EXPECT_NEAR(Utils::WrapPi(4.0f), 4.0f - 2.0f * pi, 1e-5f);
+  EXPECT_NEAR(Utils::WrapPi(-4.0f), -4.0f + 2.0f * pi, 1e-5f);
+  EXPECT_FLOAT_EQ(Utils::WrapPi(1.0f), 1.0f);
+  EXPECT_LE(std::fabs(Utils::WrapPi(pi)), pi);
+  EXPECT_NEAR(std::fabs(Utils::WrapPi(7.0f * pi)), pi, 1e-4f);
+}
+
 }  // namespace rabcl
 
 int main(int argc, char ** argv)

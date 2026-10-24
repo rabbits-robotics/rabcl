@@ -19,6 +19,9 @@ public:
     double current, double target,
     double full_rotation = 2.0 * M_PI);
 
+  // 角度を [-pi, pi) に正規化する
+  static float WrapPi(float angle);
+
   static void SetRandomSeed(uint32_t seed);
   static uint32_t Random();
   static float RandomFloat(float min, float max);

@@ -7,10 +7,13 @@ if(ESP_PLATFORM)
       src/component/bno055.cpp
       src/component/jga25_370.cpp
       src/component/ld_20mg.cpp
+      src/controller/body_attitude.cpp
       src/controller/body_posture.cpp
+      src/controller/gimbal.cpp
       src/controller/leg_damper.cpp
       src/controller/omni_drive.cpp
       src/controller/pd_gravity_ff.cpp
+      src/controller/view_target.cpp
       src/interface/can.cpp
       src/interface/uart.cpp
       src/protocol/parser.cpp
@@ -37,10 +40,13 @@ find_package(ament_cmake REQUIRED)
 add_library(rabcl SHARED
   src/component/jga25_370.cpp
   src/component/ld_20mg.cpp
+  src/controller/body_attitude.cpp
   src/controller/body_posture.cpp
+  src/controller/gimbal.cpp
   src/controller/leg_damper.cpp
   src/controller/omni_drive.cpp
   src/controller/pd_gravity_ff.cpp
+  src/controller/view_target.cpp
   src/interface/uart.cpp
   src/interface/can.cpp
   src/protocol/parser.cpp
@@ -106,6 +112,15 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_leg_damper test/test_leg_damper.cpp)
   target_link_libraries(test_leg_damper rabcl)
+
+  ament_add_gtest(test_body_attitude test/test_body_attitude.cpp)
+  target_link_libraries(test_body_attitude rabcl)
+
+  ament_add_gtest(test_gimbal test/test_gimbal.cpp)
+  target_link_libraries(test_gimbal rabcl)
+
+  ament_add_gtest(test_view_target test/test_view_target.cpp)
+  target_link_libraries(test_view_target rabcl)
 endif()
 
 ament_package()
