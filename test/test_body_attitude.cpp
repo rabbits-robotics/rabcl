@@ -48,6 +48,42 @@ TEST(BodyAttitude, AnchorImuKeepsYawContinuous)
   EXPECT_FLOAT_EQ(body.Get().roll, -0.1f);
 }
 
+TEST(BodyAttitude, YawHeldWhileTrackingDisabled)
+{
+  rabcl::BodyAttitude att;
+  att.UpdateFromChassisRate(1.0f, 0.5f);  // yaw 0.5
+  att.SetYawTracking(false);
+  att.UpdateFromChassisRate(1.0f, 1.0f);  // 無視
+  att.UpdateFromImu({2.0f, 0.1f, -0.2f}, {0.0f, 0.0f, 0.0f});  // yaw は無視、pitch / roll は追う
+  const rabcl::Attitude body = att.Get();
+  EXPECT_NEAR(body.yaw, 0.5f, 1e-6f);
+  EXPECT_NEAR(body.pitch, 0.1f, 1e-6f);
+  EXPECT_NEAR(body.roll, -0.2f, 1e-6f);
+}
+
+TEST(BodyAttitude, YawTrackingResumesFromImuWithoutJump)
+{
+  rabcl::BodyAttitude att;
+  att.UpdateFromChassisRate(1.0f, 0.5f);  // yaw 0.5
+  att.SetYawTracking(false);
+  att.UpdateFromImu({2.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
+  att.SetYawTracking(true);
+  att.UpdateFromImu({2.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});  // 再開の最初の IMU で繋ぐ → 0.5 のまま
+  EXPECT_NEAR(att.Get().yaw, 0.5f, 1e-6f);
+  att.UpdateFromImu({2.3f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});  // 以後は IMU の変化分
+  EXPECT_NEAR(att.Get().yaw, 0.8f, 1e-6f);
+}
+
+TEST(BodyAttitude, YawTrackingResumesFromChassisRate)
+{
+  rabcl::BodyAttitude att;
+  att.SetYawTracking(false);
+  att.UpdateFromChassisRate(1.0f, 1.0f);
+  att.SetYawTracking(true);
+  att.UpdateFromChassisRate(1.0f, 0.25f);
+  EXPECT_NEAR(att.Get().yaw, 0.25f, 1e-6f);
+}
+
 TEST(BodyAttitude, ResetZeroes)
 {
   BodyAttitude body;

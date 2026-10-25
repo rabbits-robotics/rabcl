@@ -1,5 +1,6 @@
 // 胴体姿勢の推定: IMU は首の先（カメラ link）にあるので、IMU 姿勢から首の関節角を引いて胴体姿勢を得る。
 // IMU 更新の合間はシャシの yaw 速度で yaw のみ積分して補う。
+// yaw は「追う」「据え置く」を切り替えられる（gamma は無限回転中だけ追い、普通の旋回では首を胴体と一緒に回す）。
 #ifndef RABCL__CONTROLLER__BODY_ATTITUDE_HPP_
 #define RABCL__CONTROLLER__BODY_ATTITUDE_HPP_
 
@@ -32,12 +33,18 @@ public:
   void AnchorImu(const Attitude & imu, const NeckAngles & joint_at_imu_time);
   // シャシの yaw 速度 wz [rad/s] を dt [s] だけ積分する（yaw のみ）
   void UpdateFromChassisRate(float wz, float dt);
+  // yaw を追うか（既定 true）。false の間は UpdateFromImu / UpdateFromChassisRate が yaw を変えない
+  // （pitch / roll は追う）。false → true にすると、次の UpdateFromImu で AnchorImu と同じ繋ぎをしてから追う
+  void SetYawTracking(bool enabled);
+  bool yaw_tracking() const;
   Attitude Get() const;
   void Reset();
 
 private:
   Attitude body_ = {0.0f, 0.0f, 0.0f};
   float imu_yaw_offset_ = 0.0f;  // IMU の yaw に足して胴体の基準に合わせる量
+  bool yaw_tracking_ = true;
+  bool anchor_pending_ = false;  // 追跡を再開した直後: 次の IMU で繋ぐ
 };
 
 }  // namespace rabcl
