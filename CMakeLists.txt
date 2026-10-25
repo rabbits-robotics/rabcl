@@ -9,6 +9,7 @@ if(ESP_PLATFORM)
       src/component/ld_20mg.cpp
       src/controller/body_attitude.cpp
       src/controller/body_posture.cpp
+      src/controller/leg_linkage.cpp
       src/controller/command_watchdog.cpp
       src/controller/gimbal.cpp
       src/controller/leg_damper.cpp
@@ -44,6 +45,7 @@ add_library(rabcl SHARED
   src/component/ld_20mg.cpp
   src/controller/body_attitude.cpp
   src/controller/body_posture.cpp
+  src/controller/leg_linkage.cpp
   src/controller/command_watchdog.cpp
   src/controller/gimbal.cpp
   src/controller/leg_damper.cpp
@@ -115,6 +117,8 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_body_posture test/test_body_posture.cpp)
   target_link_libraries(test_body_posture rabcl)
+  ament_add_gtest(test_leg_linkage test/test_leg_linkage.cpp)
+  target_link_libraries(test_leg_linkage rabcl)
 
   ament_add_gtest(test_leg_damper test/test_leg_damper.cpp)
   target_link_libraries(test_leg_damper rabcl)
