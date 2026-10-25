@@ -79,6 +79,23 @@ TEST_F(BodyPostureTest, YawOffsetPiFlipsSign)
   ExpectDrops(0.092686f, 0.068644f, 0.092686f, 0.068644f);
 }
 
+TEST_F(BodyPostureTest, DropRangeOutsideLinkageFallsBackToMechanicalLimits)
+{
+  // 設定の drop_max がリンクの範囲（0.10936）を超えていても、車高 1 は最低車高にならず θmax 側に寄る
+  BodyPosture wide{BodyPostureConfig{
+      LINKAGE, 0.03f, 0.12f, 0.170f,
+      {-PI / 4.0f, PI / 4.0f, -3.0f * PI / 4.0f, 3.0f * PI / 4.0f}}};
+  float out[4] = {};
+  wide.Solve(1.0f, 0.0f, 0.0f, 0.0f, out);
+  for (float v : out) {
+    EXPECT_NEAR(v, 1.5707963f, 1e-3f);
+  }
+  wide.Solve(0.0f, 0.0f, 0.0f, 0.0f, out);
+  for (float v : out) {
+    EXPECT_NEAR(v, 0.0f, 1e-3f);
+  }
+}
+
 TEST_F(BodyPostureTest, SolveClampsEveryLeg)
 {
   posture_.Solve(2.0f, 5.0f, -5.0f, 0.3f, out_);

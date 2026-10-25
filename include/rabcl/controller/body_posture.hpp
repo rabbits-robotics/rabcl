@@ -8,7 +8,7 @@ namespace rabcl
 struct BodyPostureConfig
 {
   LegLinkageConfig linkage;  // 脚の 4 節リンクの寸法
-  float drop_min;            // [m] 車高 0 のときの車輪の下がり（リンクの範囲内で余裕を取った値）
+  float drop_min;            // [m] 車高 0 のときの車輪の下がり（リンクの範囲内で余裕を取った値。範囲外ならメカストに丸める）
   float drop_max;            // [m] 車高 1
   float tilt_radius;         // [m] 車体中心から車輪の接地点までの水平距離。傾き 1 rad で脚の下がりに付ける差
   float leg_azimuth[4];      // 各脚の方位角 [rad]（車体 x 軸から左回り）。gamma: FR −π/4, FL π/4, BR −3π/4, BL 3π/4

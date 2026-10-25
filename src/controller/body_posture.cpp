@@ -15,6 +15,12 @@ float Clamp(float v, float lo, float hi)
 BodyPosture::BodyPosture(const BodyPostureConfig & config)
 : config_(config), linkage_(config.linkage)
 {
+  // 設定の下がりがリンクの範囲（メカスト）を超えていたらメカストに丸める。
+  // 丸めないと Inverse が解けず、車高 1 が最低車高に化けるなど黙って誤る
+  config_.drop_min = Clamp(config_.drop_min, linkage_.drop_min(), linkage_.drop_max());
+  config_.drop_max = Clamp(config_.drop_max, linkage_.drop_min(), linkage_.drop_max());
+  theta_min_ = 0.0f;
+  theta_max_ = config_.linkage.theta_max;
   linkage_.Inverse(config_.drop_min, theta_min_);
   linkage_.Inverse(config_.drop_max, theta_max_);
 }
