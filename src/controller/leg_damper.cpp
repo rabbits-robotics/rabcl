@@ -12,7 +12,7 @@ void LegDamper::Reset(float angle)
   ramped_ = angle;
 }
 
-MitCommand LegDamper::Update(float target, float angle, float vel, float dt)
+MitCommand LegDamper::Update(float target, float angle, float vel, float dt, float load_torque)
 {
   (void)vel;  // 減衰はモータ側の kd に任せる
   if (dt > 0.0f) {
@@ -26,7 +26,7 @@ MitCommand LegDamper::Update(float target, float angle, float vel, float dt)
       ramped_ = target;
     }
   }
-  float tff = config_.load_ff;
+  float tff = load_torque;
   const float err = ramped_ - angle;
   if (err > config_.deadband) {
     tff += config_.friction_ff;

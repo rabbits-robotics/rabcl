@@ -13,20 +13,25 @@ float Clamp(float v, float lo, float hi)
 }  // namespace
 
 BodyPosture::BodyPosture(const BodyPostureConfig & config)
-: config_(config)
+: config_(config), linkage_(config.linkage)
 {
+  linkage_.Inverse(config_.drop_min, theta_min_);
+  linkage_.Inverse(config_.drop_max, theta_max_);
 }
 
 void BodyPosture::Solve(float height, float roll, float pitch, float yaw_offset, float out[4]) const
 {
   const float h = Clamp(height, 0.0f, 1.0f);
-  const float base = config_.angle_min + h * (config_.angle_max - config_.angle_min);
+  const float base = config_.drop_min + h * (config_.drop_max - config_.drop_min);
   for (int i = 0; i < 4; ++i) {
     // カメラ座標系で見た脚の方位角。傾きベクトル (roll, pitch) に対する脚位置の高さ変化が
-    // sin(φ)·roll − cos(φ)·pitch（小角度）。下がる側の脚は縮む（角が小さい）
+    // tilt_radius × (sin(φ)·roll − cos(φ)·pitch)（小角度）。下がる側の脚は縮む（下がりが小さい）
     const float phi = config_.leg_azimuth[i] - yaw_offset;
-    const float delta = config_.tilt_gain * (std::sin(phi) * roll - std::cos(phi) * pitch);
-    out[i] = Clamp(base + delta, config_.angle_min, config_.angle_max);
+    const float delta = config_.tilt_radius * (std::sin(phi) * roll - std::cos(phi) * pitch);
+    const float drop = Clamp(base + delta, config_.drop_min, config_.drop_max);
+    if (!linkage_.Inverse(drop, out[i])) {
+      out[i] = (drop - config_.drop_min) < (config_.drop_max - drop) ? theta_min_ : theta_max_;
+    }
   }
 }
 }  // namespace rabcl
