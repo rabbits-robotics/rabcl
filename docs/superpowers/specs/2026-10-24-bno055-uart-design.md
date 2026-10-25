@@ -212,7 +212,7 @@ public:
 | `IMU_AXIS_MAP_CONFIG / IMU_AXIS_MAP_SIGN` | BNO055 の軸入れ替え | 既定 0x24 / 0x00。本番（部品面が後ろ、USB-C が左）と試験（部品面が上、USB-C が右）の 2 組を README に書き、実機で確定 |
 | `IMU_PITCH_SIGN / IMU_ROLL_SIGN` | BNO055 のオイラー角 → REP-103 の符号 | +1 / +1（実機で確定） |
 | `IMU_OPERATION_MODE` | 融合モード | 0x08（IMU、磁気なし） |
-| `IMU_USE_EXTERNAL_CRYSTAL` | CLK_SEL | false（AE-BNO055-BO の水晶を回路図で確認したら true） |
+| `IMU_USE_EXTERNAL_CRYSTAL` | CLK_SEL | true（AE-BNO055-BO は XT1 FC-135 32.768 kHz を実装。秋月説明書 2022-04-13 の回路図で確認） |
 | `IMU_BOOT_WAIT_MS` | 起動 / リセット後の待ち | 700 |
 | `IMU_CLOCK_SETTLE_MS` | CLK_SEL 後の待ち | 20 |
 | `IMU_RESPONSE_TIMEOUT_MS` | 応答待ち | 20 |
