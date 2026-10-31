@@ -87,6 +87,7 @@ beta 側もこのプロトコルへ移行する前提で設計する（ユーザ
 | 0x81 | `CHASSIS_VEL` | `vx f32 [m/s]`, `vy f32 [m/s]`, `wz f32 [rad/s]` |
 | 0x82 | `JOINT_CMD` | `count u8` + count × { `id u8`, `position f32`, `velocity f32`, `effort f32`, `kp f32`, `kd f32` } |
 | 0x83 | `MODE` | `count u8` + count × { `id u8`, `value u8` } |
+| 0x84 | `BODY_POSE` | `height f32 [0〜1]`, `roll f32 [rad]`, `pitch f32 [rad]`（車体の目標姿勢。2026-10-24 追加、gamma の脚制御用。ロール / ピッチは REP-103 の符号） |
 
 - `JOINT_CMD` の 1 関節は 21 B。位置制御の関節（yaw / pitch / roll）は `position` だけを使い、MIT 制御の関節（脚）は 5 つすべてを使う。どの欄を使うかはファームの関節定義が決め、使わない欄は 0 を入れる。
 - `MODE` の `id` は機体ごとのモード番号（例: 0 = load、1 = fire、2 = speed、3 = chassis）。番号と名前の対応も YAML と `robot.hpp` に置く。
@@ -103,7 +104,7 @@ constexpr uint8_t MAX_PAYLOAD = 255;
 constexpr size_t MAX_FRAME = 2 + 1 + 1 + MAX_PAYLOAD + 1;  // 260
 
 enum class Type : uint8_t { INFO = 0x01, JOINT_STATE = 0x02, IMU = 0x03, SYSTEM = 0x04,
-                            CHASSIS_VEL = 0x81, JOINT_CMD = 0x82, MODE = 0x83 };
+                            CHASSIS_VEL = 0x81, JOINT_CMD = 0x82, MODE = 0x83, BODY_POSE = 0x84 };
 
 struct JointState { uint8_t id; float position; float velocity; float effort; float temperature; uint8_t error; };
 struct JointCmd   { uint8_t id; float position; float velocity; float effort; float kp; float kd; };
