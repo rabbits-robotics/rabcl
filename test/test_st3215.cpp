@@ -17,13 +17,16 @@ class FakePort : public St3215Port
 public:
   std::vector<std::vector<uint8_t>> sent;
   std::vector<uint8_t> reply;
+  std::vector<std::vector<uint8_t>> replies;  // 呼び出しごとの応答（空 = 応答なし）。尽きたら reply
   int result = 0;  // 0 以外なら Transfer の戻り値をこれにする
 
   int Transfer(const uint8_t * tx, size_t tx_len, uint8_t * rx, size_t rx_len, uint32_t) override
   {
+    const size_t call = sent.size();
     sent.emplace_back(tx, tx + tx_len);
-    const size_t n = std::min(rx_len, reply.size());
-    std::memcpy(rx, reply.data(), n);
+    const std::vector<uint8_t> & r = call < replies.size() ? replies[call] : reply;
+    const size_t n = std::min(rx_len, r.size());
+    std::memcpy(rx, r.data(), n);
     return result != 0 ? result : static_cast<int>(n);
   }
 };
@@ -178,19 +181,72 @@ TEST(St3215, ReadStatusDecodesFields)
   EXPECT_EQ(15, port.sent[0][6]);
 }
 
-TEST(St3215, SetModeUnlocksWritesLocks)
+const std::vector<uint8_t> READ_MODE_3 = {0xFF, 0xFF, 0x01, 0x03, 0x00, 0x03, 0xF8};
+const std::vector<uint8_t> READ_LOCK_1 = {0xFF, 0xFF, 0x01, 0x03, 0x00, 0x01, 0xFA};
+
+// LOCK 0 を書く → MODE を書く → MODE を読み戻す → LOCK 1 を書く → LOCK を読み戻す
+TEST(St3215, SetModeUnlocksWritesLocksAndReadsBack)
 {
   FakePort port;
-  port.reply = ACK;
+  port.replies = {ACK, ACK, READ_MODE_3, ACK, READ_LOCK_1};
   St3215 s(port, 1);
   ASSERT_TRUE(s.SetMode(P::Mode::STEP));
-  ASSERT_EQ(3u, port.sent.size());
+  ASSERT_EQ(5u, port.sent.size());
+  EXPECT_EQ(P::INST_WRITE, port.sent[0][4]);
   EXPECT_EQ(55, port.sent[0][5]);
   EXPECT_EQ(0, port.sent[0][6]);
+  EXPECT_EQ(P::INST_WRITE, port.sent[1][4]);
   EXPECT_EQ(33, port.sent[1][5]);
   EXPECT_EQ(3, port.sent[1][6]);
-  EXPECT_EQ(55, port.sent[2][5]);
-  EXPECT_EQ(1, port.sent[2][6]);
+  EXPECT_EQ(P::INST_READ, port.sent[2][4]);
+  EXPECT_EQ(33, port.sent[2][5]);
+  EXPECT_EQ(P::INST_WRITE, port.sent[3][4]);
+  EXPECT_EQ(55, port.sent[3][5]);
+  EXPECT_EQ(1, port.sent[3][6]);
+  EXPECT_EQ(P::INST_READ, port.sent[4][4]);
+  EXPECT_EQ(55, port.sent[4][5]);
+}
+
+// 実測: EEPROM（MODE）を書いた直後はサーボの応答が遅れ、書き込みと次の LOCK 書き込みの応答が揃わないことがある。
+// 書き込みの応答ではなく読み戻しで判定するので成功になる
+TEST(St3215, SetModeSucceedsWhenEepromWriteAcksAreLate)
+{
+  FakePort port;
+  port.replies = {ACK, {}, READ_MODE_3, {}, READ_LOCK_1};
+  St3215 s(port, 1);
+  EXPECT_TRUE(s.SetMode(P::Mode::STEP));
+  EXPECT_EQ(2u, s.timeouts());
+}
+
+// 読み戻しが 1 回目で遅れた応答（書き込みの ACK）に化けても、1 回だけ読み直して判定する
+TEST(St3215, SetModeRetriesReadbackOnce)
+{
+  FakePort port;
+  port.replies = {ACK, {}, ACK, READ_MODE_3, ACK, READ_LOCK_1};
+  St3215 s(port, 1);
+  EXPECT_TRUE(s.SetMode(P::Mode::STEP));
+  EXPECT_EQ(6u, port.sent.size());
+}
+
+TEST(St3215, SetModeFailsWhenReadbackDiffers)
+{
+  FakePort port;
+  const std::vector<uint8_t> read_mode_0 = {0xFF, 0xFF, 0x01, 0x03, 0x00, 0x00, 0xFB};
+  port.replies = {ACK, ACK, read_mode_0, read_mode_0, ACK, READ_LOCK_1};
+  St3215 s(port, 1);
+  EXPECT_FALSE(s.SetMode(P::Mode::STEP));
+  ASSERT_GE(port.sent.size(), 5u);
+  EXPECT_EQ(55, port.sent[4][5]);  // 失敗しても LOCK 1 は書く
+  EXPECT_EQ(1, port.sent[4][6]);
+}
+
+TEST(St3215, SetModeFailsWhenUnlockFails)
+{
+  FakePort port;
+  port.replies = {{}};
+  St3215 s(port, 1);
+  EXPECT_FALSE(s.SetMode(P::Mode::STEP));
+  EXPECT_EQ(1u, port.sent.size());
 }
 
 TEST(St3215, NoResponseCountsTimeout)

@@ -224,14 +224,29 @@ bool St3215::WriteU16(uint8_t reg, uint16_t v)
   return Write(reg, b, 2);
 }
 
+// EEPROM（MODE）を書いた直後はサーボの応答が遅れ、その書き込みと続く LOCK 書き込みの応答が
+// 揃わないことがある（ST3215 実測）。書き込みの応答は見ず、読み戻し（1 回だけ読み直し可）で判定する
+bool St3215::ReadBackU8(uint8_t reg, uint8_t expect)
+{
+  uint8_t v = 0;
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    if (ReadU8(reg, v) && v == expect) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool St3215::SetMode(St3215Protocol::Mode mode)
 {
   if (!WriteU8(St3215Protocol::REG_LOCK, 0)) {
     return false;
   }
-  const bool ok = WriteU8(St3215Protocol::REG_MODE, static_cast<uint8_t>(mode));
-  const bool locked = WriteU8(St3215Protocol::REG_LOCK, 1);
-  return ok && locked;
+  WriteU8(St3215Protocol::REG_MODE, static_cast<uint8_t>(mode));
+  const bool mode_ok = ReadBackU8(St3215Protocol::REG_MODE, static_cast<uint8_t>(mode));
+  WriteU8(St3215Protocol::REG_LOCK, 1);
+  const bool locked = ReadBackU8(St3215Protocol::REG_LOCK, 1);
+  return mode_ok && locked;
 }
 
 bool St3215::SetTorque(bool on)

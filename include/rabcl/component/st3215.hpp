@@ -116,7 +116,8 @@ public:
   bool Write(uint8_t reg, const uint8_t * data, uint8_t len);
   bool WriteU8(uint8_t reg, uint8_t v);
   bool WriteU16(uint8_t reg, uint16_t v);
-  bool SetMode(St3215Protocol::Mode mode);  // LOCK 0 → MODE → LOCK 1
+  // LOCK 0 → MODE → 読み戻し → LOCK 1 → 読み戻し。EEPROM 書き込み直後は応答が遅れるので書き込みの応答では判定しない
+  bool SetMode(St3215Protocol::Mode mode);
   bool SetTorque(bool on);
   // ACC〜GOAL_SPEED の 7 バイトを 1 回で書く。位置モードは絶対位置、ステップモードは相対カウント
   bool Move(int16_t position_or_steps, uint16_t speed, uint8_t acc);
@@ -129,6 +130,7 @@ public:
 private:
   // 送って応答（DATA expect バイト）を受ける。失敗なら false
   bool Exchange(const uint8_t * tx, size_t tx_len, uint8_t expect, St3215Protocol::Response & resp);
+  bool ReadBackU8(uint8_t reg, uint8_t expect);  // 読んで expect と一致するか。1 回だけ読み直す
 
   St3215Port & port_;
   uint8_t id_;
