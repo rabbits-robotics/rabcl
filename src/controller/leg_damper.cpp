@@ -28,11 +28,14 @@ MitCommand LegDamper::Update(float target, float angle, float vel, float dt, flo
   }
   float tff = load_torque;
   const float err = ramped_ - angle;
-  if (err > config_.deadband) {
-    tff += config_.friction_ff;
-  } else if (err < -config_.deadband) {
-    tff -= config_.friction_ff;
+  float ratio;  // −1 〜 +1
+  if (config_.friction_band > 0.0f) {
+    ratio = err / config_.friction_band;
+    ratio = ratio > 1.0f ? 1.0f : (ratio < -1.0f ? -1.0f : ratio);
+  } else {
+    ratio = err > 0.0f ? 1.0f : (err < 0.0f ? -1.0f : 0.0f);
   }
+  tff += config_.friction_ff * ratio;
   return {ramped_, 0.0f, config_.kp, config_.kd, tff};
 }
 }  // namespace rabcl
