@@ -134,6 +134,58 @@ TEST(Protocol, EncodeJointStateRejectsMoreThan14)
   EXPECT_GT(EncodeJointState(in, 14, buf, sizeof(buf)), 0u);
 }
 
+TEST(Protocol, MotorCommandRoundTrip)
+{
+  const MotorCommand in[3] = {
+    {0, 1.5f, 0.0f, 0.25f},
+    {3, 0.0f, -12.5f, 0.0f},
+    {10, 0.835f, 0.0f, -0.1f},
+  };
+  uint8_t buf[MAX_FRAME];
+  const size_t n = EncodeMotorCommand(in, 3, buf, sizeof(buf));
+  ASSERT_EQ(n, 5u + 1u + 13u * 3u);
+  EXPECT_EQ(buf[2], static_cast<uint8_t>(Type::MOTOR_COMMAND));
+  MotorCommand out[3] = {};
+  uint8_t count = 0;
+  ASSERT_TRUE(DecodeMotorCommand(&buf[4], buf[3], out, 3, count));
+  ASSERT_EQ(count, 3);
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_EQ(out[i].id, in[i].id);
+    EXPECT_FLOAT_EQ(out[i].position, in[i].position);
+    EXPECT_FLOAT_EQ(out[i].velocity, in[i].velocity);
+    EXPECT_FLOAT_EQ(out[i].effort, in[i].effort);
+  }
+}
+
+TEST(Protocol, MotorCommandEmptyRoundTrip)
+{
+  uint8_t buf[MAX_FRAME];
+  const size_t n = EncodeMotorCommand(nullptr, 0, buf, sizeof(buf));
+  ASSERT_EQ(n, 6u);
+  MotorCommand out[1] = {};
+  uint8_t count = 7;
+  ASSERT_TRUE(DecodeMotorCommand(&buf[4], buf[3], out, 1, count));
+  EXPECT_EQ(count, 0);
+}
+
+TEST(Protocol, MotorCommandDecodeRejectsWrongLen)
+{
+  const MotorCommand in[2] = {{0, 0, 0, 0}, {1, 0, 0, 0}};
+  uint8_t buf[MAX_FRAME];
+  ASSERT_GT(EncodeMotorCommand(in, 2, buf, sizeof(buf)), 0u);
+  MotorCommand out[2] = {};
+  uint8_t count = 0;
+  EXPECT_FALSE(DecodeMotorCommand(&buf[4], static_cast<uint8_t>(buf[3] + 1), out, 2, count));
+}
+
+TEST(Protocol, EncodeMotorCommandRejectsMoreThan19)
+{
+  MotorCommand in[20] = {};
+  uint8_t buf[MAX_FRAME];
+  EXPECT_EQ(EncodeMotorCommand(in, 20, buf, sizeof(buf)), 0u);
+  EXPECT_GT(EncodeMotorCommand(in, 19, buf, sizeof(buf)), 0u);
+}
+
 TEST(Protocol, EncodeReturnsZeroWhenBufferTooSmall)
 {
   uint8_t buf[16];  // ChassisVel は 17 B

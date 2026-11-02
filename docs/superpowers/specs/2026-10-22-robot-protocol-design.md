@@ -77,6 +77,7 @@ beta 側もこのプロトコルへ移行する前提で設計する（ユーザ
 | 0x02 | `JOINT_STATE` | `count u8` + count × { `id u8`, `position f32 [rad]`, `velocity f32 [rad/s]`, `effort f32 [Nm または A]`, `temperature f32 [℃]`, `error u8` } | 制御周期ごと（gamma 100 Hz、beta 100 Hz） |
 | 0x03 | `IMU` | `acc f32[3] [m/s²]`, `gyro f32[3] [rad/s]`, `euler f32[3] [rad]（heading, roll, pitch）` | IMU 更新ごと |
 | 0x04 | `SYSTEM` | `bus_voltage f32 [V]`, `error_flags u32`, `uptime_ms u32` | 1 秒ごと（最初は gamma のみ） |
+| 0x05 | `MOTOR_COMMAND` | `count u8` + count × { `id u8`, `position f32 [rad]`, `velocity f32 [rad/s]`, `effort f32` } | 制御周期ごと。そのティックにモータへ指令を送った関節だけ（2026-11-01 追加、Command の可視化用。位置制御の関節は position、速度制御は velocity、使わないほうは 0） |
 
 `JOINT_STATE` の 1 関節は 18 B。1 メッセージに最大 14 関節（253 B）。それを超える機体は複数メッセージに分けて送る（`count` が示す）。`effort` の意味（トルクか電流か）は関節ごとに決まり、ROS 2 側の YAML に `effort_unit` として書く。
 
@@ -103,7 +104,7 @@ constexpr uint8_t HEADER_1 = 0x5A;
 constexpr uint8_t MAX_PAYLOAD = 255;
 constexpr size_t MAX_FRAME = 2 + 1 + 1 + MAX_PAYLOAD + 1;  // 260
 
-enum class Type : uint8_t { INFO = 0x01, JOINT_STATE = 0x02, IMU = 0x03, SYSTEM = 0x04,
+enum class Type : uint8_t { INFO = 0x01, JOINT_STATE = 0x02, IMU = 0x03, SYSTEM = 0x04, MOTOR_COMMAND = 0x05,
                             CHASSIS_VEL = 0x81, JOINT_CMD = 0x82, MODE = 0x83, BODY_POSE = 0x84 };
 
 struct JointState { uint8_t id; float position; float velocity; float effort; float temperature; uint8_t error; };

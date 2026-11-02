@@ -203,6 +203,26 @@ size_t EncodeBodyPose(const BodyPose & pose, uint8_t * buf, size_t cap)
   return EndFrame(buf, BODY_POSE_LEN);
 }
 
+size_t EncodeMotorCommand(const MotorCommand * cmds, uint8_t count, uint8_t * buf, size_t cap)
+{
+  if (count > MAX_MOTOR_COMMANDS) {
+    return 0;
+  }
+  const uint8_t len = static_cast<uint8_t>(1 + MOTOR_COMMAND_ITEM_LEN * count);
+  uint8_t * p = BeginFrame(Type::MOTOR_COMMAND, len, buf, cap);
+  if (p == nullptr) {
+    return 0;
+  }
+  *p++ = count;
+  for (uint8_t i = 0; i < count; ++i) {
+    *p++ = cmds[i].id;
+    PutF32(p, cmds[i].position);
+    PutF32(p, cmds[i].velocity);
+    PutF32(p, cmds[i].effort);
+  }
+  return EndFrame(buf, len);
+}
+
 // --- Decode ---
 
 bool DecodeInfo(const uint8_t * payload, uint8_t len, Info & info)
@@ -331,6 +351,27 @@ bool DecodeBodyPose(const uint8_t * payload, uint8_t len, BodyPose & pose)
   pose.height = GetF32(p);
   pose.roll = GetF32(p);
   pose.pitch = GetF32(p);
+  return true;
+}
+
+bool DecodeMotorCommand(
+  const uint8_t * payload, uint8_t len, MotorCommand * cmds, uint8_t max, uint8_t & count)
+{
+  if (len < 1) {
+    return false;
+  }
+  const uint8_t n = payload[0];
+  if (n > max || len != 1 + MOTOR_COMMAND_ITEM_LEN * n) {
+    return false;
+  }
+  const uint8_t * p = &payload[1];
+  for (uint8_t i = 0; i < n; ++i) {
+    cmds[i].id = *p++;
+    cmds[i].position = GetF32(p);
+    cmds[i].velocity = GetF32(p);
+    cmds[i].effort = GetF32(p);
+  }
+  count = n;
   return true;
 }
 

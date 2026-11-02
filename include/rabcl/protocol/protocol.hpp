@@ -3,6 +3,8 @@
 // crc8 は type + len + payload に対する CRC-8（多項式 0x07、初期値 0x00、非反転）。
 // 数値はリトルエンディアン、float は binary32。
 // 設計書: docs/superpowers/specs/2026-10-22-robot-protocol-design.md
+// MOTOR_COMMAND: マイコンがそのティックにモータへ送った指令（Command）。位置制御の関節は position、
+// 速度制御の関節は velocity に目標を入れ、使わないほうは 0。effort はフィードフォワード
 #ifndef RABCL__PROTOCOL__PROTOCOL_HPP_
 #define RABCL__PROTOCOL__PROTOCOL_HPP_
 
@@ -21,6 +23,7 @@ constexpr size_t MAX_FRAME = FRAME_OVERHEAD + MAX_PAYLOAD;  // 260
 constexpr uint8_t MAX_JOINT_STATES = 14;  // 1 + 14 * 18 = 253 B
 constexpr uint8_t MAX_JOINT_CMDS = 12;    // 1 + 12 * 21 = 253 B
 constexpr uint8_t MAX_MODES = 127;        // 1 + 127 * 2 = 255 B
+constexpr uint8_t MAX_MOTOR_COMMANDS = 19;  // 1 + 19 * 13 = 248 B
 
 // 上位 1 bit が方向: 0x00〜0x7F は上り（ファーム → PC）、0x80〜0xFF は下り（PC → ファーム）
 enum class Type : uint8_t
@@ -29,6 +32,7 @@ enum class Type : uint8_t
   JOINT_STATE = 0x02,
   IMU = 0x03,
   SYSTEM = 0x04,
+  MOTOR_COMMAND = 0x05,
   CHASSIS_VEL = 0x81,
   JOINT_CMD = 0x82,
   MODE = 0x83,
@@ -50,6 +54,14 @@ struct JointState
   float effort;       // [Nm] または [A]（関節ごとに決まる）
   float temperature;  // [℃]
   uint8_t error;      // 0 = 正常。意味はモータ種別ごと
+};
+
+struct MotorCommand
+{
+  uint8_t id;
+  float position;  // [rad] 位置制御の関節の目標。速度制御の関節は 0
+  float velocity;  // [rad/s] 速度制御の関節の目標。位置制御の関節は 0
+  float effort;    // [Nm] または [A] フィードフォワード
 };
 
 struct Imu
@@ -105,6 +117,7 @@ constexpr uint8_t CHASSIS_VEL_LEN = 12;
 constexpr uint8_t JOINT_CMD_ITEM_LEN = 21;
 constexpr uint8_t MODE_ITEM_LEN = 2;
 constexpr uint8_t BODY_POSE_LEN = 12;
+constexpr uint8_t MOTOR_COMMAND_ITEM_LEN = 13;
 
 uint8_t Crc8(const uint8_t * data, size_t len);
 
@@ -117,6 +130,7 @@ size_t EncodeChassisVel(const ChassisVel & vel, uint8_t * buf, size_t cap);
 size_t EncodeJointCmd(const JointCmd * cmds, uint8_t count, uint8_t * buf, size_t cap);
 size_t EncodeMode(const ModeCmd * modes, uint8_t count, uint8_t * buf, size_t cap);
 size_t EncodeBodyPose(const BodyPose & pose, uint8_t * buf, size_t cap);
+size_t EncodeMotorCommand(const MotorCommand * cmds, uint8_t count, uint8_t * buf, size_t cap);
 
 // デコード: payload（len B）から構造体へ。len がレイアウトと合わなければ false。
 // 配列型は count が max を超えると false
@@ -132,6 +146,8 @@ bool DecodeMode(
   const uint8_t * payload, uint8_t len, ModeCmd * modes, uint8_t max,
   uint8_t & count);
 bool DecodeBodyPose(const uint8_t * payload, uint8_t len, BodyPose & pose);
+bool DecodeMotorCommand(
+  const uint8_t * payload, uint8_t len, MotorCommand * cmds, uint8_t max, uint8_t & count);
 
 }  // namespace rabcl::protocol
 
