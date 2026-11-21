@@ -44,4 +44,15 @@ void Feeder::Cancel()
   pending_ = false;
 }
 
+int16_t Feeder::AlignSteps(int32_t position, float phase_offset) const
+{
+  const float cell = config_.counts_per_cell;
+  float phase = std::fmod(static_cast<float>(position) - phase_offset, cell);
+  if (phase < 0.0f) {
+    phase += cell;  // [0, cell)
+  }
+  const float steps = phase < cell / 2.0f ? -phase : cell - phase;
+  return static_cast<int16_t>(std::lround(steps));
+}
+
 }  // namespace rabcl

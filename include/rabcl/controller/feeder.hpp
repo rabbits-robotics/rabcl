@@ -33,6 +33,11 @@ public:
   int16_t Update(Mode mode, float now_s);
   void Cancel();  // 保留を捨てる（途絶）
 
+  // 起動時の位相合わせ: サーボの絶対角 position（位置モードで読む）から一番近い穴までの相対ステップ。
+  // 穴の位置 = phase_offset + k × counts_per_cell。半セル未満なら戻り、以上なら進む。結果は ±(counts_per_cell / 2) 以内。
+  // セル数・送信済みカウントには数えない（装填ではない）
+  int16_t AlignSteps(int32_t position, float phase_offset) const;
+
   float target_counts() const {return target_;}
   int32_t sent_counts() const {return sent_;}
   int32_t cells() const {return cells_;}
