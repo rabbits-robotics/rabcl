@@ -175,6 +175,17 @@ TEST(FeederAlign, OffsetOutsideOneCellIsWrapped)
   EXPECT_EQ(0, f.AlignSteps(30, 30.0f - 4096.0f / 24.0f));
 }
 
+TEST(FeederAlign, BackwardUnlessHoleIsWithinTolerance)  // ジャム起因の再接続: 噛んだ球の方へ 1 セル進まない
+{
+  Feeder f = MakeFeeder();
+  EXPECT_EQ(0, f.AlignStepsBackward(30, 30.0f, 20.0f));      // 穴の上
+  EXPECT_EQ(-30, f.AlignStepsBackward(60, 30.0f, 20.0f));    // 直前の穴へ
+  EXPECT_EQ(-120, f.AlignStepsBackward(150, 30.0f, 20.0f));  // 次の穴が 51 先: 戻る
+  EXPECT_EQ(11, f.AlignStepsBackward(190, 30.0f, 20.0f));    // 次の穴が 11 先（許容内）: 数カウントだけ進む
+  EXPECT_EQ(1, f.AlignStepsBackward(4296, 30.0f, 20.0f));    // AlignSteps と同じ +1
+  EXPECT_EQ(-41, f.AlignStepsBackward(-100, 30.0f, 20.0f));
+}
+
 }  // namespace rabcl
 
 int main(int argc, char ** argv)

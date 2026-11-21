@@ -44,14 +44,34 @@ void Feeder::Cancel()
   pending_ = false;
 }
 
+namespace
+{
+
+// 穴からの位相 [0, cell)
+float Phase(int32_t position, float phase_offset, float cell)
+{
+  float phase = std::fmod(static_cast<float>(position) - phase_offset, cell);
+  if (phase < 0.0f) {
+    phase += cell;
+  }
+  return phase;
+}
+
+}  // namespace
+
 int16_t Feeder::AlignSteps(int32_t position, float phase_offset) const
 {
   const float cell = config_.counts_per_cell;
-  float phase = std::fmod(static_cast<float>(position) - phase_offset, cell);
-  if (phase < 0.0f) {
-    phase += cell;  // [0, cell)
-  }
+  const float phase = Phase(position, phase_offset, cell);
   const float steps = phase < cell / 2.0f ? -phase : cell - phase;
+  return static_cast<int16_t>(std::lround(steps));
+}
+
+int16_t Feeder::AlignStepsBackward(int32_t position, float phase_offset, float tolerance) const
+{
+  const float cell = config_.counts_per_cell;
+  const float phase = Phase(position, phase_offset, cell);
+  const float steps = cell - phase <= tolerance ? cell - phase : -phase;
   return static_cast<int16_t>(std::lround(steps));
 }
 

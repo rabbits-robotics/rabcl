@@ -13,6 +13,7 @@ if(ESP_PLATFORM)
       src/controller/leg_linkage.cpp
       src/controller/command_watchdog.cpp
       src/controller/feeder.cpp
+      src/controller/jam_recovery.cpp
       src/controller/gimbal.cpp
       src/controller/leg_damper.cpp
       src/controller/omni_drive.cpp
@@ -51,6 +52,7 @@ add_library(rabcl SHARED
   src/controller/leg_linkage.cpp
   src/controller/command_watchdog.cpp
   src/controller/feeder.cpp
+  src/controller/jam_recovery.cpp
   src/controller/gimbal.cpp
   src/controller/leg_damper.cpp
   src/controller/omni_drive.cpp
@@ -131,6 +133,8 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_feeder test/test_feeder.cpp)
   target_link_libraries(test_feeder rabcl)
+  ament_add_gtest(test_jam_recovery test/test_jam_recovery.cpp)
+  target_link_libraries(test_jam_recovery rabcl)
 
   ament_add_gtest(test_body_attitude test/test_body_attitude.cpp)
   target_link_libraries(test_body_attitude rabcl)

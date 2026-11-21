@@ -37,6 +37,9 @@ public:
   // 穴の位置 = phase_offset + k × counts_per_cell。半セル未満なら戻り、以上なら進む。結果は ±(counts_per_cell / 2) 以内。
   // セル数・送信済みカウントには数えない（装填ではない）
   int16_t AlignSteps(int32_t position, float phase_offset) const;
+  // 同じく位相合わせだが、後ろの穴へ戻る。次の穴が tolerance 以内（静止時の残差程度）ならそこへ少し進む。
+  // ジャム起因の再接続で噛んだ球の方へ 1 セル進まないため。結果は (−counts_per_cell, tolerance]
+  int16_t AlignStepsBackward(int32_t position, float phase_offset, float tolerance) const;
 
   float target_counts() const {return target_;}
   int32_t sent_counts() const {return sent_;}
